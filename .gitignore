@@ -1,0 +1,25 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+
+# Virtual environments
+.venv
+
+# Local application state
+.data/
+.streamlit/
+
+# Local environment files
+.env
+infra/env/.env
+
+# Local model artifacts
+infra/ollama/models/*.gguf

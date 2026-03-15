@@ -1,0 +1,44 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: memllm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-memllm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-memllm}
+      POSTGRES_DB: ${POSTGRES_BOOTSTRAP_DB:-postgres}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: memllm-ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+      - ../ollama:/workspace/ollama
+    gpus: all
+
+  letta:
+    image: letta/letta:latest
+    container_name: memllm-letta
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - ollama
+    environment:
+      LETTA_PG_URI: postgresql://${POSTGRES_USER:-memllm}:${POSTGRES_PASSWORD:-memllm}@postgres:5432/${LETTA_DB_NAME:-letta}
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      SECURE: ${LETTA_SECURE:-false}
+      LETTA_SERVER_PASSWORD: ${LETTA_SERVER_PASSWORD:-}
+    ports:
+      - "${LETTA_PORT:-8283}:8283"
+
+volumes:
+  postgres_data:
+  ollama_data:

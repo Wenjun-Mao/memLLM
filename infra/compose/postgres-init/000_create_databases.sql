@@ -1,0 +1,10 @@
+\set ON_ERROR_STOP on
+
+CREATE DATABASE letta;
+CREATE DATABASE memllm;
+
+\connect letta
+CREATE EXTENSION IF NOT EXISTS vector;
+
+\connect memllm
+CREATE EXTENSION IF NOT EXISTS vector;

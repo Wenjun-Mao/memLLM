@@ -1,0 +1,38 @@
+[project]
+name = "memllm-workspace"
+version = "0.1.0"
+description = "Phase 1 monorepo for a Letta-backed character chatbot"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = [
+    "apps/*",
+    "packages/*",
+]
+
+[tool.uv.sources]
+memllm-api = { workspace = true }
+memllm-dev-ui = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.5",
+    "httpx>=0.28.1",
+    "ruff>=0.11.2",
+]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
