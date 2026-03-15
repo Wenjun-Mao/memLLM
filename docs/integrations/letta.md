@@ -27,8 +27,9 @@ Official docs:
 ## Project Assumptions
 
 - Letta runs in Docker on Ubuntu
-- Postgres/pgvector runs alongside it
-- Ollama is available to Letta and to the memory-extraction pipeline
+- Postgres/pgvector runs in Docker on the same host
+- Ollama runs in Docker on the same host and is available to Letta and to the memory-extraction
+  pipeline
 - developers can expose Letta locally via SSH port forwarding when needed
 
 ## App Integration Surface

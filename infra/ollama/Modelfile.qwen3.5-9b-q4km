@@ -1,1 +1,1 @@
-FROM /workspace/ollama/models/qwen3.5-9b-q4_k_m.gguf
+FROM /workspace/ollama/models/Qwen3.5-9B-Q4_K_M.gguf

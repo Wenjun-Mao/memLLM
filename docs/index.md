@@ -6,13 +6,14 @@ integration notes, and deferred work in the repo so later phases do not depend o
 ## Current Phase
 
 - Phase: `phase_1`
-- Status: monorepo scaffold in progress
-- Canonical dev topology: Docker-based Letta + Postgres/pgvector + Ollama on Ubuntu
+- Status source: [planning/current_status.md](planning/current_status.md)
+- Canonical dev topology: Docker-based Postgres/pgvector + Letta + Ollama on Ubuntu
 - Memory operations UI: Letta Desktop or ADE in self-hosted server mode
 - Product chat UI: local Streamlit app backed by the FastAPI service
 
 ## Start Here
 
+- [Current Status](planning/current_status.md)
 - [Phase 1 Scope](planning/phase_1_scope.md)
 - [Monorepo Structure](architecture/monorepo_structure.md)
 - [Chat Flow](architecture/chat_flow.md)
@@ -22,6 +23,7 @@ integration notes, and deferred work in the repo so later phases do not depend o
 
 ## Planning
 
+- [planning/current_status.md](planning/current_status.md)
 - [planning/phase_1_scope.md](planning/phase_1_scope.md)
 - [planning/phase_2_prep.md](planning/phase_2_prep.md)
 - [planning/roadmap.md](planning/roadmap.md)

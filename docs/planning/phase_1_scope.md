@@ -9,6 +9,7 @@ Build a development-ready monorepo for a Letta-backed multi-character chatbot wi
 - Letta-managed memory for each `(user_id, character_id)` pair
 - pluggable reply providers, including a non-OpenAI custom HTTP adapter
 - local memory extraction through Ollama
+- an Ubuntu bootstrap flow for the Docker stack and host-side dev processes
 - repo-based documentation that preserves decisions and deferred work
 
 ## Acceptance Criteria
@@ -17,7 +18,9 @@ Build a development-ready monorepo for a Letta-backed multi-character chatbot wi
 - characters can be seeded from `characters/manifests/*.yaml`
 - the API exposes `GET /characters`, `POST /seed/characters`, `POST /chat`, and `GET /memory/{user_id}/{character_id}`
 - the dev UI can switch characters, send messages, and inspect memory snapshots
-- Letta can run self-hosted in Docker and be inspected through Letta Desktop or ADE
+- Letta, Postgres/pgvector, and Ollama can run self-hosted in Docker and Letta can be inspected
+  through Letta Desktop or ADE
+- the repo documents current verification status in [current_status.md](current_status.md)
 - phase-2 carry-forward information is documented in [phase_2_prep.md](phase_2_prep.md)
 
 ## Intentionally Deferred

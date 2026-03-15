@@ -1,12 +1,16 @@
 # Roadmap
 
+Detailed implementation and verification tracking lives in [current_status.md](current_status.md).
+
 ## Phase 1
 
 - monorepo scaffold
 - Letta + Ollama Docker dev stack
+- Postgres/pgvector Docker dev stack
 - FastAPI orchestration app
 - Streamlit development UI
 - versioned character manifests
+- Ubuntu bootstrap/status scripts
 - docs, runbooks, and ADRs
 
 ## Phase 2

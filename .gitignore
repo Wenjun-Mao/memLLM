@@ -16,10 +16,12 @@ wheels/
 # Local application state
 .data/
 .streamlit/
+.runtime/
 
 # Local environment files
 .env
 infra/env/.env
 
 # Local model artifacts
-infra/ollama/models/*.gguf
+infra/ollama/models/*
+!infra/ollama/models/.gitkeep

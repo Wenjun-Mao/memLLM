@@ -9,6 +9,7 @@ Update this file whenever phase 1 reveals work that should be picked up later.
 - support provider-specific auth and credential rotation
 - add richer character import/export and revision history
 - harden remote Ubuntu deployment and TLS strategy for Letta/ADE access
+- decide whether host-side dev processes should stay outside Compose in later phases
 
 ## Open Questions
 
@@ -22,6 +23,8 @@ Update this file whenever phase 1 reveals work that should be picked up later.
 - Letta should be treated as the memory system of record, not the only UI surface
 - Letta Desktop is useful for memory management, but the project still needs its own chat UX
 - the custom simplified provider contract should stay behind a stable adapter boundary
+- the dev topology is containerized for Postgres/pgvector, Letta, and Ollama; only the Python app
+  processes stay on the host during phase 1
 
 ## Update Rule
 
