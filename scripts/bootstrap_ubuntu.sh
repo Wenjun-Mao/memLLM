@@ -58,6 +58,7 @@ select_hf_cmd() {
 }
 
 preflight_checks() {
+  require_command curl
   require_command docker
   require_command git
   require_command uv

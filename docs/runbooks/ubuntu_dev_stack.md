@@ -24,7 +24,7 @@ Run the phase-1 development stack on the Ubuntu development machine:
 The Ubuntu host is responsible for:
 
 - running the repo bootstrap script
-- providing Docker, Compose, NVIDIA runtime support, Git, and `uv`
+- providing Docker, Compose, NVIDIA runtime support, Git, `curl`, and `uv`
 - providing a working `nvidia-persistenced` service so GPU containers can start cleanly
 
 All phase-1 services run inside the Docker stack.
@@ -43,7 +43,7 @@ bash scripts/bootstrap_ubuntu.sh --mode full
 
 What it does:
 
-- runs preflight checks for Docker, `uv`, Git, and NVIDIA support
+- runs preflight checks for Docker, `uv`, Git, `curl`, and NVIDIA support
 - syncs the `uv` workspace
 - downloads the Qwen GGUF into `infra/ollama/models/` if it is missing
 - starts the core Docker services: `postgres`, `ollama`, and `letta`

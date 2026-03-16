@@ -84,22 +84,22 @@ require_command() {
 http_ok() {
   local url="$1"
   local ok_codes="${2:-200}"
-  URL="$url" OK_CODES="$ok_codes" uv run python - <<'PY2'
-from __future__ import annotations
+  local code
 
-import os
-import sys
+  code=$(curl -sS -L -o /dev/null -w '%{http_code}' --max-time 5 "$url" 2>/dev/null || true)
+  if [[ -z "$code" || "$code" == "000" ]]; then
+    return 1
+  fi
 
-import httpx
-
-ok_codes = {int(item) for item in os.environ['OK_CODES'].split(',') if item.strip()}
-try:
-    response = httpx.get(os.environ['URL'], timeout=5.0, follow_redirects=True)
-except Exception:
-    sys.exit(1)
-
-sys.exit(0 if response.status_code in ok_codes else 1)
-PY2
+  local candidate
+  IFS=',' read -r -a _memllm_ok_codes <<< "$ok_codes"
+  for candidate in "${_memllm_ok_codes[@]}"; do
+    candidate="${candidate//[[:space:]]/}"
+    if [[ "$code" == "$candidate" ]]; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 wait_for_http() {
