@@ -17,7 +17,7 @@ class DevUiSettings(BaseSettings):
 
     api_base_url: str = "http://127.0.0.1:8000"
     default_user_id: str = "dev-user-001"
-    request_timeout_seconds: float = 30.0
+    request_timeout_seconds: float = 300.0
 
     @classmethod
     def settings_customise_sources(

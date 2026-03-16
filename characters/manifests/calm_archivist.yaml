@@ -10,7 +10,7 @@ reply_provider:
   kind: ollama_chat
   base_url: http://localhost:11434
   model: memllm-qwen3.5-9b-q4km
-  timeout_seconds: 45
+  timeout_seconds: 300
   extra:
     temperature: 0.3
 memory:

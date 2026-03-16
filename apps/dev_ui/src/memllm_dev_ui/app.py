@@ -55,6 +55,11 @@ def main() -> None:
         st.header("Workspace")
         user_id = st.text_input("User ID", value=settings.default_user_id)
         seed_clicked = st.button("Seed Characters", use_container_width=True)
+        st.caption(
+            "Request timeout: "
+            f"{settings.request_timeout_seconds:.0f}s. "
+            "Cold model loads can take longer on smaller GPUs."
+        )
         st.markdown(
             "Use Letta Desktop in self-hosted server mode against the Docker Letta instance "
             "when you need direct memory inspection, editing, or debugging."
@@ -90,22 +95,23 @@ def main() -> None:
             st.session_state["messages"].append({"role": "user", "content": prompt})
             with st.chat_message("user"):
                 st.markdown(prompt)
-            try:
-                response = client.send_chat(
-                    user_id=user_id,
-                    character_id=selected_character["character_id"],
-                    message=prompt,
-                )
-            except httpx.HTTPStatusError as exc:
-                st.error(f"Chat failed: {exc.response.text}")
-                return
-            except httpx.HTTPError as exc:
-                st.error(f"Chat failed: {exc}")
-                return
-
-            reply = response["reply"]
-            st.session_state["messages"].append({"role": "assistant", "content": reply})
             with st.chat_message("assistant"):
+                with st.spinner("Generating reply. Cold starts can take a while on smaller GPUs."):
+                    try:
+                        response = client.send_chat(
+                            user_id=user_id,
+                            character_id=selected_character["character_id"],
+                            message=prompt,
+                        )
+                    except httpx.HTTPStatusError as exc:
+                        st.error(f"Chat failed: {exc.response.text}")
+                        return
+                    except httpx.HTTPError as exc:
+                        st.error(f"Chat failed: {exc}")
+                        return
+
+                reply = response["reply"]
+                st.session_state["messages"].append({"role": "assistant", "content": reply})
                 st.markdown(reply)
 
     with right:

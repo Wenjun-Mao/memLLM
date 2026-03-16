@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
+from urllib.parse import urlsplit
 
 from loguru import logger
 from memllm_domain import (
@@ -12,12 +14,17 @@ from memllm_domain import (
     ChatTurn,
     MemoryContext,
     MemorySnapshot,
+    ProviderConfig,
     ReplyRequest,
     SeedReport,
     SeedReportItem,
     SessionRecord,
 )
-from memllm_letta_integration import LettaGateway
+from memllm_letta_integration import (
+    LettaEmbeddingConfig,
+    LettaGateway,
+    LettaLLMConfig,
+)
 from memllm_memory_pipeline import MemoryExtractorRegistry
 from memllm_reply_providers import ReplyProviderRegistry
 
@@ -56,7 +63,7 @@ class CharacterSeeder:
                 existing_block_ids=existing.shared_block_ids if existing else None,
             )
             upserted, created = self._store.upsert_character(
-                record.model_copy(update={"shared_block_ids": shared_block_ids})
+                record.model_copy(update={'shared_block_ids': shared_block_ids})
             )
             items.append(
                 SeedReportItem(
@@ -66,8 +73,18 @@ class CharacterSeeder:
                     shared_block_ids=upserted.shared_block_ids,
                 )
             )
-            logger.info("Seeded character {}", upserted.character_id)
+            logger.info('Seeded character {}', upserted.character_id)
         return SeedReport(seeded=items)
+
+
+_AGENT_NAME_UNSAFE_RE = re.compile(r"[^\w\s\-']+", flags=re.UNICODE)
+
+
+def build_agent_name(*, character_id: str, user_id: str) -> str:
+    raw_name = f'{character_id}__{user_id}'
+    sanitized = _AGENT_NAME_UNSAFE_RE.sub('_', raw_name)
+    sanitized = re.sub(r'_+', '_', sanitized).strip(' _')
+    return sanitized or 'memllm-agent'
 
 
 class ChatOrchestrator:
@@ -92,7 +109,7 @@ class ChatOrchestrator:
     def prepare_chat(self, request: ChatRequest) -> tuple[ChatResponse, PendingMemoryWrite]:
         character = self._store.get_character(request.character_id)
         if not character:
-            raise CharacterNotFoundError(f"Unknown character: {request.character_id}")
+            raise CharacterNotFoundError(f'Unknown character: {request.character_id}')
 
         session = self._get_or_create_session(request.user_id, character)
         memory_context = self._letta_gateway.get_memory_context(
@@ -102,7 +119,7 @@ class ChatOrchestrator:
         )
         messages = self._build_message_history(request=request, character=character)
         provider_response = self._reply_providers.generate(
-            config=character.reply_provider,
+            config=self._resolve_reply_provider_config(character.reply_provider),
             request=ReplyRequest(
                 character=character,
                 user_id=request.user_id,
@@ -146,7 +163,7 @@ class ChatOrchestrator:
             )
         )
         logger.debug(
-            "Persisted turn for user={} character={}",
+            'Persisted turn for user={} character={}',
             pending.session.user_id,
             pending.session.character_id,
         )
@@ -154,7 +171,7 @@ class ChatOrchestrator:
     def get_memory_snapshot(self, user_id: str, character_id: str) -> MemorySnapshot:
         character = self._store.get_character(character_id)
         if not character:
-            raise CharacterNotFoundError(f"Unknown character: {character_id}")
+            raise CharacterNotFoundError(f'Unknown character: {character_id}')
         session = self._store.get_session(user_id=user_id, character_id=character_id)
         return self._letta_gateway.get_memory_snapshot(
             user_id=user_id,
@@ -170,10 +187,12 @@ class ChatOrchestrator:
             return session
 
         agent_id = self._letta_gateway.create_session_agent(
-            agent_name=f"{character.character_id}:{user_id}",
+            agent_name=build_agent_name(character_id=character.character_id, user_id=user_id),
             shared_block_ids=list(character.shared_block_ids.values()),
             model=self._settings.letta_model,
             embedding=self._settings.letta_embedding,
+            llm_config=self._build_letta_llm_config(),
+            embedding_config=self._build_letta_embedding_config(),
             initial_human_block=character.memory.initial_human_block,
         )
         return self._store.upsert_session(
@@ -183,6 +202,45 @@ class ChatOrchestrator:
                 agent_id=agent_id,
             )
         )
+
+    def _build_letta_llm_config(self) -> LettaLLMConfig | None:
+        if not self._settings.letta_use_direct_model_config:
+            return None
+        return LettaLLMConfig(
+            model=self._settings.letta_model_name,
+            endpoint=self._settings.letta_model_endpoint,
+            context_window=self._settings.letta_model_context_window,
+            max_tokens=self._settings.letta_model_max_tokens,
+        )
+
+    def _build_letta_embedding_config(self) -> LettaEmbeddingConfig | None:
+        if not self._settings.letta_use_direct_model_config:
+            return None
+        return LettaEmbeddingConfig(
+            model=self._settings.letta_embedding_name,
+            endpoint=self._settings.letta_embedding_endpoint,
+            embedding_dim=self._settings.letta_embedding_dim,
+        )
+
+    def _resolve_reply_provider_config(self, config: ProviderConfig) -> ProviderConfig:
+        if config.kind != 'ollama_chat':
+            return config
+
+        resolved_base_url = self._resolve_ollama_base_url(config.base_url)
+        if resolved_base_url == (config.base_url or '').rstrip('/'):
+            return config
+        return config.model_copy(update={'base_url': resolved_base_url})
+
+    def _resolve_ollama_base_url(self, base_url: str | None) -> str:
+        fallback = self._settings.reply_provider_ollama_base_url.rstrip('/')
+        if not base_url:
+            return fallback
+
+        normalized = base_url.rstrip('/')
+        hostname = urlsplit(normalized).hostname
+        if hostname in {'localhost', '127.0.0.1', '::1'}:
+            return fallback
+        return normalized
 
     def _build_message_history(
         self, *, request: ChatRequest, character: CharacterRecord
@@ -194,7 +252,7 @@ class ChatOrchestrator:
         )
         messages: list[ChatMessage] = []
         for turn in turns:
-            messages.append(ChatMessage(role="user", content=turn.user_message))
-            messages.append(ChatMessage(role="assistant", content=turn.assistant_message))
-        messages.append(ChatMessage(role="user", content=request.message))
+            messages.append(ChatMessage(role='user', content=turn.user_message))
+            messages.append(ChatMessage(role='assistant', content=turn.assistant_message))
+        messages.append(ChatMessage(role='user', content=request.message))
         return messages

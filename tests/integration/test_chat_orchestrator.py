@@ -22,6 +22,20 @@ class FakeReplyProvider:
         return ProviderResponse(provider_kind=self.kind, content=f"echo::{message}")
 
 
+class CapturingReplyProvider:
+    kind = "ollama_chat"
+
+    def __init__(self) -> None:
+        self.last_config: ProviderConfig | None = None
+
+    def generate(self, config: ProviderConfig, request):  # type: ignore[override]
+        del request
+        self.last_config = config
+        from memllm_domain import ProviderResponse
+
+        return ProviderResponse(provider_kind=self.kind, content="ok")
+
+
 def _make_character(character_id: str) -> CharacterRecord:
     return CharacterRecord(
         character_id=character_id,
@@ -84,3 +98,31 @@ def test_sessions_are_isolated_per_user_character_pair() -> None:
         for block in snapshot_a.blocks
         if block.label == "human"
     )
+
+
+def test_localhost_ollama_base_url_is_overridden_by_runtime_setting() -> None:
+    settings = ApiSettings(
+        manifest_dir=Path("characters/manifests"),
+        database_backend="memory",
+        letta_mode="memory",
+        memory_extractor_kind="heuristic",
+        reply_provider_ollama_base_url="http://ollama:11434",
+    )
+    store = InMemoryMetadataStore()
+    store.upsert_character(_make_character("alpha"))
+    provider = CapturingReplyProvider()
+
+    orchestrator = ChatOrchestrator(
+        settings=settings,
+        store=store,
+        letta_gateway=InMemoryLettaGateway(),
+        reply_providers=ReplyProviderRegistry([provider]),
+        memory_extractors=MemoryExtractorRegistry(),
+    )
+
+    orchestrator.prepare_chat(
+        ChatRequest(user_id="u1", character_id="alpha", message="hello")
+    )
+
+    assert provider.last_config is not None
+    assert provider.last_config.base_url == "http://ollama:11434"

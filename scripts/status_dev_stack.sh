@@ -5,19 +5,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=/dev/null
 source "$SCRIPT_DIR/_dev_stack_common.sh"
 
-report_process() {
-  local label="$1"
-  local pid_file="$2"
-  local log_file="$3"
-
-  cleanup_stale_pid "$pid_file"
-  if is_pid_running "$pid_file"; then
-    printf -- "- %s: running (pid %s, log %s)\n" "$label" "$(<"$pid_file")" "$log_file"
-  else
-    printf -- "- %s: not running\n" "$label"
-  fi
-}
-
 report_endpoint() {
   local label="$1"
   local url="$2"
@@ -32,15 +19,9 @@ report_endpoint() {
 
 load_env_file
 validate_env_constraints
-ensure_runtime_dir
 
 echo "Docker services"
 compose_cmd ps
-
-echo
-echo "Host processes"
-report_process "memllm-api" "$API_PID_FILE" "$API_LOG_FILE"
-report_process "memllm-dev-ui" "$DEV_UI_PID_FILE" "$DEV_UI_LOG_FILE"
 
 echo
 echo "Model assets"
@@ -58,6 +39,14 @@ if docker exec "$OLLAMA_CONTAINER" ollama list >/dev/null 2>&1; then
   fi
 else
   printf -- "- Ollama alias: unavailable because the Ollama container is not responding\n"
+fi
+
+echo
+echo "Loaded Ollama models"
+if ! docker exec "$OLLAMA_CONTAINER" ollama ps >/dev/null 2>&1; then
+  printf -- "- Ollama is not responding\n"
+else
+  docker exec "$OLLAMA_CONTAINER" ollama ps
 fi
 
 echo

@@ -11,8 +11,8 @@ Usage: bash scripts/bootstrap_ubuntu.sh [--mode infra|api|full]
 
 Modes:
   infra  Prepare the Docker stack, local models, and Python workspace only.
-  api    Do everything in infra, then start the FastAPI service and seed characters.
-  full   Do everything in api, then start the Streamlit dev UI.
+  api    Do everything in infra, then start the API container.
+  full   Do everything in api, then start the Streamlit dev UI container.
 EOF
 }
 
@@ -128,73 +128,66 @@ ensure_custom_ollama_alias() {
     -f "/workspace/ollama/$(basename "$OLLAMA_MODELFILE")"
 }
 
+preload_chat_model() {
+  print_info "Preloading $OLLAMA_MODEL_ALIAS and asking Ollama to keep it resident."
+  OLLAMA_BASE_URL="$OLLAMA_BASE_URL" OLLAMA_MODEL="$OLLAMA_MODEL_ALIAS:latest" uv run python - <<'PY2'
+from __future__ import annotations
+
+import os
+
+import httpx
+
+payload = {
+    'model': os.environ['OLLAMA_MODEL'],
+    'prompt': '<|im_start|>system\nStay ready.<|im_end|>\n<|im_start|>assistant\n',
+    'stream': False,
+    'raw': True,
+    'keep_alive': -1,
+    'options': {'num_predict': 1},
+}
+with httpx.Client(timeout=120.0) as client:
+    response = client.post(f"{os.environ['OLLAMA_BASE_URL']}/api/generate", json=payload)
+    response.raise_for_status()
+PY2
+}
+
 start_infra() {
   print_info "Starting Docker services for Postgres/pgvector, Ollama, and Letta."
-  compose_cmd up -d
+  compose_cmd up -d postgres ollama letta
   wait_for_postgres
   wait_for_ollama
   wait_for_letta
   ensure_ollama_model "$OLLAMA_EMBED_MODEL"
   ensure_custom_ollama_alias
+  preload_chat_model
 }
 
 start_api() {
-  local database_url="postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@127.0.0.1:${POSTGRES_PORT}/memllm"
-  start_background_process \
-    "memllm-api" \
-    "$API_PID_FILE" \
-    "$API_LOG_FILE" \
-    env \
-      MEMLLM_API_HOST="$MEMLLM_API_HOST" \
-      MEMLLM_API_PORT="$MEMLLM_API_PORT" \
-      MEMLLM_API_DATABASE_BACKEND="sqlalchemy" \
-      MEMLLM_API_DATABASE_URL="$database_url" \
-      MEMLLM_API_LETTA_MODE="real" \
-      MEMLLM_API_LETTA_BASE_URL="$LETTA_BASE_URL" \
-      MEMLLM_API_LETTA_MODEL="ollama/${OLLAMA_MODEL_ALIAS}" \
-      MEMLLM_API_LETTA_EMBEDDING="ollama/${OLLAMA_EMBED_MODEL}" \
-      MEMLLM_API_MEMORY_EXTRACTOR_KIND="ollama_json" \
-      MEMLLM_API_MEMORY_EXTRACTOR_BASE_URL="$OLLAMA_BASE_URL" \
-      MEMLLM_API_MEMORY_EXTRACTOR_MODEL="$OLLAMA_MODEL_ALIAS" \
-      uv run --package memllm-api memllm-api
-  wait_for_http "memllm-api" "$MEMLLM_API_BASE_URL/health" "200" 30
-}
-
-seed_characters() {
-  print_info "Seeding character manifests through the API."
-  (
-    cd "$ROOT_DIR"
-    MEMLLM_API_BASE_URL="$MEMLLM_API_BASE_URL" uv run python scripts/seed_characters.py
-  )
+  print_info "Starting the API container."
+  compose_cmd up -d api
+  wait_for_http "memllm-api" "$MEMLLM_API_BASE_URL/health" "200" 60
 }
 
 start_dev_ui() {
-  start_background_process \
-    "memllm-dev-ui" \
-    "$DEV_UI_PID_FILE" \
-    "$DEV_UI_LOG_FILE" \
-    env \
-      MEMLLM_DEV_UI_API_BASE_URL="$MEMLLM_API_BASE_URL" \
-      STREAMLIT_SERVER_PORT="$MEMLLM_DEV_UI_PORT" \
-      uv run --package memllm-dev-ui memllm-dev-ui
-  wait_for_http "memllm-dev-ui" "$MEMLLM_DEV_UI_BASE_URL" "200,302" 30
+  print_info "Starting the dev UI container."
+  compose_cmd up -d dev_ui
+  wait_for_http "memllm-dev-ui" "$MEMLLM_DEV_UI_BASE_URL" "200,302" 60
 }
 
 print_summary() {
   print_info "Bootstrap complete."
   print_info "Docker stack: Postgres on 127.0.0.1:${POSTGRES_PORT}, Ollama on $OLLAMA_BASE_URL, Letta on $LETTA_BASE_URL"
   if [[ "$MODE" == "api" || "$MODE" == "full" ]]; then
-    print_info "API: $MEMLLM_API_BASE_URL (log: $API_LOG_FILE)"
+    print_info "API: $MEMLLM_API_BASE_URL"
   fi
   if [[ "$MODE" == "full" ]]; then
-    print_info "Dev UI: $MEMLLM_DEV_UI_BASE_URL (log: $DEV_UI_LOG_FILE)"
+    print_info "Dev UI: $MEMLLM_DEV_UI_BASE_URL"
   fi
   print_info "Use bash scripts/status_dev_stack.sh to inspect the environment."
 }
 
 load_env_file
 validate_env_constraints
-ensure_runtime_dir
 select_hf_cmd
 preflight_checks
 sync_workspace
@@ -203,7 +196,6 @@ start_infra
 
 if [[ "$MODE" == "api" || "$MODE" == "full" ]]; then
   start_api
-  seed_characters
 fi
 
 if [[ "$MODE" == "full" ]]; then

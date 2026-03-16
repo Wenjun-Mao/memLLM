@@ -11,7 +11,7 @@ reply_provider:
   kind: custom_simple_http
   endpoint: https://ou-han.cn/DouBao/chat_new_ai
   transport: get
-  timeout_seconds: 45
+  timeout_seconds: 180
 memory:
   archival_search_limit: 5
   snapshot_passage_limit: 10

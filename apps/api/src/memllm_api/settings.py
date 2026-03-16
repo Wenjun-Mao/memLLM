@@ -5,15 +5,15 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
-SECRETS_DIR = Path("/run/secrets")
+SECRETS_DIR = Path('/run/secrets')
 
 
 class ApiBaseSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_prefix="MEMLLM_API_",
-        env_nested_delimiter="__",
+        env_prefix='MEMLLM_API_',
+        env_nested_delimiter='__',
         secrets_dir=str(SECRETS_DIR) if SECRETS_DIR.exists() else None,
-        extra="ignore",
+        extra='ignore',
     )
 
     @classmethod
@@ -29,24 +29,33 @@ class ApiBaseSettings(BaseSettings):
 
 
 class ApiSettings(ApiBaseSettings):
-    app_name: str = "memllm-api"
-    host: str = "127.0.0.1"
+    app_name: str = 'memllm-api'
+    host: str = '127.0.0.1'
     port: int = 8000
     reload: bool = False
 
-    manifest_dir: Path = Path("characters/manifests")
+    manifest_dir: Path = Path('characters/manifests')
     seed_on_startup: bool = False
 
-    database_backend: Literal["sqlalchemy", "memory"] = "sqlalchemy"
-    database_url: str = "postgresql+psycopg://memllm:memllm@localhost:5432/memllm"
+    database_backend: Literal['sqlalchemy', 'memory'] = 'sqlalchemy'
+    database_url: str = 'postgresql+psycopg://memllm:memllm@localhost:5432/memllm'
 
-    letta_mode: Literal["real", "memory"] = "real"
-    letta_base_url: str = "http://localhost:8283"
+    letta_mode: Literal['real', 'memory'] = 'real'
+    letta_base_url: str = 'http://localhost:8283'
     letta_api_key: str | None = None
-    letta_model: str = "ollama/memllm-qwen3.5-9b-q4km"
-    letta_embedding: str = "ollama/mxbai-embed-large"
+    letta_model: str = 'ollama/memllm-qwen3.5-9b-q4km'
+    letta_embedding: str = 'ollama/mxbai-embed-large'
+    letta_use_direct_model_config: bool = True
+    letta_model_name: str = 'memllm-qwen3.5-9b-q4km:latest'
+    letta_model_endpoint: str = 'http://ollama:11434/v1'
+    letta_model_context_window: int = 262144
+    letta_model_max_tokens: int = 1024
+    letta_embedding_name: str = 'mxbai-embed-large:latest'
+    letta_embedding_endpoint: str = 'http://ollama:11434/v1'
+    letta_embedding_dim: int = 1024
 
-    memory_extractor_kind: Literal["heuristic", "ollama_json"] = "ollama_json"
-    memory_extractor_base_url: str = "http://localhost:11434"
-    memory_extractor_model: str = "memllm-qwen3.5-9b-q4km"
+    memory_extractor_kind: Literal['heuristic', 'ollama_json'] = 'ollama_json'
+    memory_extractor_base_url: str = 'http://localhost:11434'
+    memory_extractor_model: str = 'memllm-qwen3.5-9b-q4km'
     memory_extractor_timeout_seconds: float = 45.0
+    reply_provider_ollama_base_url: str = 'http://localhost:11434'

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -56,3 +57,81 @@ def test_seed_chat_and_memory_flow() -> None:
         snapshot = memory_response.json()
         assert snapshot["agent_id"] is not None
         assert any(block["label"] == "human" for block in snapshot["blocks"])
+
+
+class _FakeJsonResponse:
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+        self.headers = {'content-type': 'application/json'}
+
+    def json(self) -> object:
+        return self._payload
+
+
+def test_parse_simple_payload_extracts_nested_data_content() -> None:
+    from memllm_reply_providers.providers import _parse_simple_payload
+
+    payload = {
+        'status': 1001,
+        'info': 'success!',
+        'data': [
+            {
+                'content': 'Greetings. The air carries a faint frost.',
+                'role': 'assistant',
+            }
+        ],
+    }
+
+    content, raw_payload = _parse_simple_payload(_FakeJsonResponse(payload))
+
+    assert content == 'Greetings. The air carries a faint frost.'
+    assert raw_payload == payload
+
+
+class _FakeTextResponse:
+    def __init__(self, text: str, content_type: str = 'text/plain') -> None:
+        self.text = text
+        self.headers = {'content-type': content_type}
+
+    def json(self) -> object:
+        raise AssertionError('json() should not be used for text/plain response in this test')
+
+
+def test_parse_simple_payload_extracts_nested_content_from_json_text() -> None:
+    from memllm_reply_providers.providers import _parse_simple_payload
+
+    payload = {
+        'status': 1001,
+        'info': 'success!',
+        'data': {
+            'content': 'The snow has settled since we last spoke.',
+            'role': 'assistant',
+        },
+    }
+
+    content, raw_payload = _parse_simple_payload(
+        _FakeTextResponse(json.dumps(payload, ensure_ascii=False))
+    )
+
+    assert content == 'The snow has settled since we last spoke.'
+    assert raw_payload == payload
+
+
+def test_parse_simple_payload_extracts_nested_content_from_double_encoded_json_text() -> None:
+    from memllm_reply_providers.providers import _parse_simple_payload
+
+    payload = {
+        'status': 1001,
+        'info': 'success!',
+        'data': {
+            'content': 'Again, the snowfall pauses.',
+            'role': 'assistant',
+        },
+    }
+
+    content, raw_payload = _parse_simple_payload(
+        _FakeTextResponse(json.dumps(json.dumps(payload, ensure_ascii=False), ensure_ascii=False))
+    )
+
+    assert content == 'Again, the snowfall pauses.'
+    assert raw_payload == json.dumps(payload, ensure_ascii=False)

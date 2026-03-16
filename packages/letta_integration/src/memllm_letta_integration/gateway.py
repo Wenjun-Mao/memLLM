@@ -32,6 +32,8 @@ class LettaGateway(Protocol):
         shared_block_ids: list[str],
         model: str,
         embedding: str,
+        llm_config: LettaLLMConfig | None = None,
+        embedding_config: LettaEmbeddingConfig | None = None,
         initial_human_block: str,
     ) -> str: ...
 
@@ -55,18 +57,37 @@ def _iter_page_items(page: object) -> Iterable[object]:
         return []
     if isinstance(page, list):
         return page
-    if hasattr(page, "data"):
+    if hasattr(page, 'data'):
         return page.data
     return page
+
+
+@dataclass(frozen=True)
+class LettaLLMConfig:
+    model: str
+    endpoint: str
+    context_window: int
+    max_tokens: int
+    endpoint_type: str = 'openai'
+
+
+@dataclass(frozen=True)
+class LettaEmbeddingConfig:
+    model: str
+    endpoint: str
+    embedding_dim: int
+    endpoint_type: str = 'openai'
+    batch_size: int = 32
+    chunk_size: int = 300
 
 
 class RealLettaGateway:
     def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
         from letta_client import Letta
 
-        kwargs = {"base_url": base_url}
+        kwargs = {'base_url': base_url}
         if api_key:
-            kwargs["api_key"] = api_key
+            kwargs['api_key'] = api_key
         self._client = Letta(**kwargs)
 
     def upsert_shared_blocks(
@@ -81,7 +102,7 @@ class RealLettaGateway:
             block_id = existing_block_ids.get(block.label)
             if block_id:
                 updated = self._client.blocks.update(block_id=block_id, value=block.value)
-                results[block.label] = getattr(updated, "id", block_id)
+                results[block.label] = getattr(updated, 'id', block_id)
             else:
                 created = self._client.blocks.create(label=block.label, value=block.value)
                 results[block.label] = created.id
@@ -94,15 +115,35 @@ class RealLettaGateway:
         shared_block_ids: list[str],
         model: str,
         embedding: str,
+        llm_config: LettaLLMConfig | None = None,
+        embedding_config: LettaEmbeddingConfig | None = None,
         initial_human_block: str,
     ) -> str:
-        agent = self._client.agents.create(
-            name=agent_name,
-            model=model,
-            embedding=embedding,
-            memory_blocks=[{"label": "human", "value": initial_human_block}],
-            block_ids=shared_block_ids,
-        )
+        create_kwargs: dict[str, object] = {
+            'name': agent_name,
+            'memory_blocks': [{'label': 'human', 'value': initial_human_block}],
+            'block_ids': shared_block_ids,
+        }
+        if llm_config and embedding_config:
+            create_kwargs['llm_config'] = {
+                'model': llm_config.model,
+                'model_endpoint_type': llm_config.endpoint_type,
+                'model_endpoint': llm_config.endpoint,
+                'context_window': llm_config.context_window,
+                'max_tokens': llm_config.max_tokens,
+            }
+            create_kwargs['embedding_config'] = {
+                'embedding_model': embedding_config.model,
+                'embedding_endpoint_type': embedding_config.endpoint_type,
+                'embedding_endpoint': embedding_config.endpoint,
+                'embedding_dim': embedding_config.embedding_dim,
+                'batch_size': embedding_config.batch_size,
+                'embedding_chunk_size': embedding_config.chunk_size,
+            }
+        else:
+            create_kwargs['model'] = model
+            create_kwargs['embedding'] = embedding
+        agent = self._client.agents.create(**create_kwargs)
         return agent.id
 
     def get_memory_context(self, *, agent_id: str, query: str, top_k: int) -> MemoryContext:
@@ -112,31 +153,31 @@ class RealLettaGateway:
                 MemoryBlock(
                     label=block.label,
                     value=block.value,
-                    block_id=getattr(block, "id", None),
-                    scope="shared" if block.label != "human" else "user",
+                    block_id=getattr(block, 'id', None),
+                    scope='shared' if block.label != 'human' else 'user',
                 )
                 for block in _iter_page_items(block_page)
             ]
             if query:
                 result = self._client.agents.passages.search(
-                    agent_id=agent_id, query=query, limit=top_k
+                    agent_id=agent_id, query=query, top_k=top_k
                 )
-                passage_items = getattr(result, "passages", [])
+                passage_items = getattr(result, 'passages', [])
             else:
                 passage_items = _iter_page_items(
                     self._client.agents.passages.list(agent_id=agent_id, limit=top_k)
                 )
             passages = [
                 MemoryPassage(
-                    text=getattr(passage, "text", ""),
-                    memory_id=getattr(passage, "id", None),
-                    score=getattr(passage, "score", None),
+                    text=getattr(passage, 'text', ''),
+                    memory_id=getattr(passage, 'id', None),
+                    score=getattr(passage, 'score', None),
                 )
                 for passage in passage_items
             ]
             return MemoryContext(blocks=blocks, passages=passages)
         except Exception as exc:  # noqa: BLE001
-            raise LettaGatewayError("Failed to retrieve Letta memory context.") from exc
+            raise LettaGatewayError('Failed to retrieve Letta memory context.') from exc
 
     def get_memory_snapshot(
         self,
@@ -153,13 +194,13 @@ class RealLettaGateway:
                 character_id=character_id,
                 agent_id=None,
                 blocks=[
-                    MemoryBlock(label=block.label, value=block.value, scope="shared")
+                    MemoryBlock(label=block.label, value=block.value, scope='shared')
                     for block in shared_blocks or []
                 ],
                 passages=[],
             )
 
-        context = self.get_memory_context(agent_id=agent_id, query="", top_k=passage_limit)
+        context = self.get_memory_context(agent_id=agent_id, query='', top_k=passage_limit)
         return MemorySnapshot(
             user_id=user_id,
             character_id=character_id,
@@ -173,13 +214,13 @@ class RealLettaGateway:
             if delta.human_block_value:
                 self._client.agents.blocks.update(
                     agent_id=agent_id,
-                    block_label="human",
+                    block_label='human',
                     value=delta.human_block_value,
                 )
             for passage in delta.passages:
                 self._client.agents.passages.create(agent_id=agent_id, text=passage)
         except Exception as exc:  # noqa: BLE001
-            raise LettaGatewayError("Failed to apply memory delta to Letta.") from exc
+            raise LettaGatewayError('Failed to apply memory delta to Letta.') from exc
 
 
 @dataclass
@@ -199,10 +240,10 @@ class InMemoryLettaGateway:
         self.agents: dict[str, _InMemoryAgent] = {}
 
     def _next_block_id(self) -> str:
-        return f"block-{next(self._block_counter)}"
+        return f'block-{next(self._block_counter)}'
 
     def _next_agent_id(self) -> str:
-        return f"agent-{next(self._agent_counter)}"
+        return f'agent-{next(self._agent_counter)}'
 
     def upsert_shared_blocks(
         self,
@@ -218,7 +259,7 @@ class InMemoryLettaGateway:
                 label=block.label,
                 value=block.value,
                 block_id=block_id,
-                scope="shared",
+                scope='shared',
             )
             result[block.label] = block_id
         return result
@@ -230,15 +271,17 @@ class InMemoryLettaGateway:
         shared_block_ids: list[str],
         model: str,
         embedding: str,
+        llm_config: LettaLLMConfig | None = None,
+        embedding_config: LettaEmbeddingConfig | None = None,
         initial_human_block: str,
     ) -> str:
-        del model, embedding
+        del model, embedding, llm_config, embedding_config
         agent_id = self._next_agent_id()
         self.agents[agent_id] = _InMemoryAgent(
             agent_id=agent_id,
             name=agent_name,
             shared_block_ids=shared_block_ids,
-            blocks={"human": MemoryBlock(label="human", value=initial_human_block, scope="user")},
+            blocks={'human': MemoryBlock(label='human', value=initial_human_block, scope='user')},
         )
         return agent_id
 
@@ -269,12 +312,12 @@ class InMemoryLettaGateway:
                 character_id=character_id,
                 agent_id=None,
                 blocks=[
-                    MemoryBlock(label=block.label, value=block.value, scope="shared")
+                    MemoryBlock(label=block.label, value=block.value, scope='shared')
                     for block in shared_blocks or []
                 ],
                 passages=[],
             )
-        context = self.get_memory_context(agent_id=agent_id, query="", top_k=100)
+        context = self.get_memory_context(agent_id=agent_id, query='', top_k=100)
         return MemorySnapshot(
             user_id=user_id,
             character_id=character_id,
@@ -286,15 +329,15 @@ class InMemoryLettaGateway:
     def apply_memory_delta(self, *, agent_id: str, delta: MemoryDelta) -> None:
         agent = self.agents[agent_id]
         if delta.human_block_value:
-            agent.blocks["human"] = MemoryBlock(
-                label="human", value=delta.human_block_value, scope="user"
+            agent.blocks['human'] = MemoryBlock(
+                label='human', value=delta.human_block_value, scope='user'
             )
         for passage_text in delta.passages:
             if not any(existing.text == passage_text for existing in agent.passages):
                 agent.passages.append(
                     MemoryPassage(
                         text=passage_text,
-                        memory_id=f"memory-{len(agent.passages) + 1}",
+                        memory_id=f'memory-{len(agent.passages) + 1}',
                     )
                 )
-        logger.debug("Applied memory delta to in-memory agent {}", agent_id)
+        logger.debug('Applied memory delta to in-memory agent {}', agent_id)

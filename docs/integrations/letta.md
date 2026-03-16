@@ -40,3 +40,14 @@ The project uses the Letta Python SDK for:
 - agent creation
 - block listing and updates
 - passage search and passage creation
+
+## Current Integration Notes
+
+- Letta v0.16.6 did not register the imported Ollama GGUF alias as a synced LLM model in the WSL2
+  smoke test because the alias was exposed by Ollama as `completion`-only instead of advertising
+  `tools` capability.
+- The application therefore creates agents with explicit `llm_config` and `embedding_config`
+  pointing at Ollama's internal Docker-network endpoint instead of depending on a Letta provider
+  handle for the chat model.
+- This keeps the Letta layer offline while still allowing imported local models to be used for
+  phase-1 memory-backed development.
