@@ -15,7 +15,9 @@ Update this file whenever phase 1 reveals work that should be picked up later.
 
 - whether the final deployment keeps the FastAPI service separate from the Letta host
 - whether app metadata should stay in a separate database or move to a schema strategy
-- whether `memllm-qwen3.5-9b-q4km` remains the default local model after phase-2 benchmarking
+- whether `memllm-qwen3.5-9b-q4km` remains the default local chat model after phase-2 benchmarking
+- whether `qwen3-embedding:0.6b` remains the default Letta embedding model or should move to a
+  larger embedding model after Chinese-retrieval benchmarking
 - whether a React frontend replaces the Streamlit development UI for phase 2
 - whether the Letta explicit-`llm_config` workaround should stay long term or be replaced once the
   Ollama model-registration path is clearer upstream
@@ -37,7 +39,7 @@ Update this file whenever phase 1 reveals work that should be picked up later.
 - keeping the chat model resident with `keep_alive=-1` materially improves repeat-request latency on
   smaller GPUs, at the cost of holding most of the VRAM budget open for that model
 - on an 8 GB WSL2 GPU, Ollama had noticeable first-response latency because it had to swap between
-  the embedding model and the 9B chat model
+  the `qwen3-embedding:0.6b` model and the 9B chat model
 
 ## Update Rule
 

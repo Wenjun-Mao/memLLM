@@ -18,6 +18,7 @@ Run the phase-1 development stack on the Ubuntu development machine:
 - Bootstrap script: [../../scripts/bootstrap_ubuntu.sh](../../scripts/bootstrap_ubuntu.sh)
 - Status script: [../../scripts/status_dev_stack.sh](../../scripts/status_dev_stack.sh)
 - Stop script: [../../scripts/stop_dev_stack.sh](../../scripts/stop_dev_stack.sh)
+- Cleanup script: [../../scripts/clean_dev_stack.sh](../../scripts/clean_dev_stack.sh)
 
 ## Canonical Flow
 
@@ -25,7 +26,7 @@ The Ubuntu host is responsible for:
 
 - running the repo bootstrap script
 - providing Docker, Compose, NVIDIA runtime support, Git, `curl`, and `uv`
-- providing a working `nvidia-persistenced` service so GPU containers can start cleanly
+- allowing `docker run --gpus all ... nvidia-smi` to succeed
 
 All phase-1 services run inside the Docker stack.
 
@@ -50,7 +51,7 @@ What it does:
 - rebuilds the repo-managed Letta image when needed before startup
 - waits for those core services to become healthy
   The Letta wait is configurable with `LETTA_READY_TIMEOUT_SECONDS` and can take several minutes on first boot, especially if the container is doing one-time startup work. The bootstrap now prints periodic progress lines while it waits.
-- pulls the Ollama embedding model `mxbai-embed-large` if needed
+- pulls the Ollama embedding model `qwen3-embedding:0.6b` if needed
 - creates the project Ollama alias `memllm-qwen3.5-9b-q4km` if needed
 - attempts to preload the local chat model with Ollama's documented empty-request `keep_alive` path and asks Ollama to keep it resident
 
@@ -109,29 +110,35 @@ Use the helper scripts during development:
 ```bash
 bash scripts/status_dev_stack.sh
 bash scripts/stop_dev_stack.sh
+bash scripts/clean_dev_stack.sh --yes
 ```
+
+`clean_dev_stack.sh` is the destructive reset path. It removes the stack containers, networks, and named volumes so Letta memory, app metadata, and Ollama's cached models/aliases are rebuilt from scratch. By default it preserves `infra/ollama/models/Qwen3.5-9B-Q4_K_M.gguf`, `infra/letta/nltk_data/`, and `infra/env/.env`.
 
 ## GPU Runtime Check
 
-Before the bootstrap script can start Ollama with `gpus: all`, the host must satisfy two GPU-container prerequisites:
+Before the bootstrap script can start Ollama with `gpus: all`, the host must satisfy these GPU-container prerequisites:
 
 - Docker must report an NVIDIA runtime.
-- The host must expose `/run/nvidia-persistenced/socket`.
+- A real Docker GPU smoke test must succeed:
 
-If the bootstrap script fails with an error mentioning `nvidia-persistenced/socket`, fix the host first:
+```bash
+docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi
+```
+
+The bootstrap uses that containerized `nvidia-smi` check as the source of truth because WSL2 and native Ubuntu expose GPU support differently:
+
+- On Docker Desktop with WSL2, GPU access is typically provided through GPU-PV, and the Linux distro may not expose `/run/nvidia-persistenced/socket` even when GPU containers work.
+- On a native Ubuntu host with the NVIDIA Container Toolkit, `/run/nvidia-persistenced/socket` is still a useful troubleshooting signal if the Docker GPU smoke test fails.
+
+So if the bootstrap reports a missing `nvidia-persistenced` socket on a native Ubuntu host, fix that host first:
 
 ```bash
 sudo systemctl enable --now nvidia-persistenced
 sudo systemctl restart docker
 ```
 
-Then validate Docker GPU access directly:
-
-```bash
-docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi
-```
-
-If `nvidia-persistenced` is not installed on the host yet, install the NVIDIA driver component that provides it, then rerun the two commands above.
+If `nvidia-persistenced` is not installed on the host yet, install the NVIDIA driver component that provides it, then rerun the smoke test above.
 
 ## Model Download
 
@@ -156,7 +163,7 @@ cp infra/env/ubuntu-dev.example.env infra/env/.env
 uv sync --all-packages
 hf download unsloth/Qwen3.5-9B-GGUF Qwen3.5-9B-Q4_K_M.gguf --local-dir infra/ollama/models
 docker compose --env-file infra/env/.env -f infra/compose/ubuntu-dev-stack.yml up -d --build
-docker exec -it memllm-ollama ollama pull mxbai-embed-large
+docker exec -it memllm-ollama ollama pull qwen3-embedding:0.6b
 docker exec -it memllm-ollama ollama create memllm-qwen3.5-9b-q4km -f /workspace/ollama/Modelfile.qwen3.5-9b-q4km
 ```
 
@@ -194,7 +201,7 @@ docker logs --tail 120 memllm-letta
   `api` and `dev_ui` can still come up. Tune this with `OLLAMA_PRELOAD_ATTEMPTS` and
   `OLLAMA_PRELOAD_DELAY_SECONDS` in `infra/env/.env`.
 - On smaller GPUs, expect higher first-response latency because Ollama may need to swap between the
-  embedding model and the 9B chat model.
+  `qwen3-embedding:0.6b` model and the 9B chat model.
 
 ## Letta Desktop / ADE
 

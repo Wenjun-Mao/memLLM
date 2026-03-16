@@ -12,9 +12,15 @@ This file tracks what is actually built, what has been verified, and what still 
   coverage.
 - [x] The repo contains a Docker Compose topology for `postgres`/`pgvector`, `ollama`, `letta`,
   the FastAPI API, and the Streamlit dev UI.
-- [x] The repo contains Ubuntu operator scripts for bootstrap, status inspection, and shutdown.
+- [x] The repo contains Ubuntu operator scripts for bootstrap, status inspection, shutdown, and destructive cleanup.
 - [x] The Qwen 3.5 9B `Q4_K_M` GGUF import path is standardized through `hf` into
   `infra/ollama/models/`.
+- [x] The phase-1 Letta embedding default is now `qwen3-embedding:0.6b`, which preserves the current
+  `1024`-dimension Letta config while improving Chinese/multilingual alignment over the earlier
+  `mxbai-embed-large` default.
+- [x] `bash scripts/clean_dev_stack.sh --yes` removes the Docker stack, named volumes, Letta memory,
+  app metadata, and cached Ollama models/aliases while preserving the downloaded GGUF, Letta NLTK
+  data, and `infra/env/.env`.
 - [x] On a fresh Ubuntu 24.04 WSL2 clone, `bash scripts/bootstrap_ubuntu.sh --mode infra` brought
   up Docker-hosted Postgres/pgvector, Ollama, and Letta, downloaded the GGUF, and created the
   `memllm-qwen3.5-9b-q4km` alias.
@@ -35,7 +41,8 @@ This file tracks what is actually built, what has been verified, and what still 
   fix, rather than validating only through direct HTTP calls.
 - [ ] Confirm Letta Desktop in self-hosted server mode can inspect the Docker-hosted Letta server
   during a real dev session.
-- [ ] Repeat the smoke test on the target Ubuntu machine with the 24 GB RTX 4090.
+- [ ] Repeat the smoke test on the target Ubuntu machine with the 24 GB RTX 4090 after the
+  `qwen3-embedding:0.6b` switch.
 
 ## WSL2 Findings
 
@@ -52,6 +59,8 @@ This file tracks what is actually built, what has been verified, and what still 
   is `UNTIL Forever` in `ollama ps`.
 - On the WSL2 machine used here, the GPU was an 8 GB RTX 3080 Laptop GPU, and first-response
   latency was high because Ollama had to swap between the embedding model and the 9B chat model.
+- On the current local Codex host, a fresh `--mode full` rebuild after cleanup is blocked by the
+  missing `/run/nvidia-persistenced/socket` host prerequisite before Docker GPU startup.
 
 ## How To Run Right Now
 
@@ -70,6 +79,7 @@ This file tracks what is actually built, what has been verified, and what still 
    the stack is healthy.
 5. `bash scripts/status_dev_stack.sh`
 6. `bash scripts/stop_dev_stack.sh`
+7. `bash scripts/clean_dev_stack.sh --yes` when you want to wipe Letta/app memory and rebuild from scratch
 
 ## Next Steps
 

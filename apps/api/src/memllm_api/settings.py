@@ -44,13 +44,13 @@ class ApiSettings(ApiBaseSettings):
     letta_base_url: str = 'http://localhost:8283'
     letta_api_key: str | None = None
     letta_model: str = 'ollama/memllm-qwen3.5-9b-q4km'
-    letta_embedding: str = 'ollama/mxbai-embed-large'
+    letta_embedding: str = 'ollama/qwen3-embedding:0.6b'
     letta_use_direct_model_config: bool = True
     letta_model_name: str = 'memllm-qwen3.5-9b-q4km:latest'
     letta_model_endpoint: str = 'http://ollama:11434/v1'
     letta_model_context_window: int = 262144
     letta_model_max_tokens: int = 1024
-    letta_embedding_name: str = 'mxbai-embed-large:latest'
+    letta_embedding_name: str = 'qwen3-embedding:0.6b'
     letta_embedding_endpoint: str = 'http://ollama:11434/v1'
     letta_embedding_dim: int = 1024
 

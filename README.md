@@ -52,15 +52,16 @@ bash scripts/bootstrap_ubuntu.sh --mode api
 bash scripts/bootstrap_ubuntu.sh --mode full
 ```
 
-The Ubuntu host must already have Docker GPU support working. In particular, the NVIDIA runtime must be visible to Docker, `nvidia-persistenced` must be running before the Ollama container can start, and `curl` must be available for health checks. The bootstrap also preloads Letta's required NLTK `punkt_tab` data into `infra/letta/nltk_data/` and the project builds a small Letta wrapper image so cached NLTK data is used without relying on an online NLTK index during app startup. For Ollama, the bootstrap uses the documented empty-request `keep_alive` preload path, retries it a few times, and can be tuned with `OLLAMA_PRELOAD_ATTEMPTS` and `OLLAMA_PRELOAD_DELAY_SECONDS` in `infra/env/.env`.
+The Ubuntu host must already have Docker GPU support working. In particular, the NVIDIA runtime must be visible to Docker and `curl` must be available for health checks. The bootstrap now uses a real `docker run --gpus all ... nvidia-smi` smoke test as the portable GPU preflight because Docker Desktop on WSL2 may not expose the native Linux `nvidia-persistenced` socket inside the distro even when GPU containers work. On a native Ubuntu host, `nvidia-persistenced` is still a useful troubleshooting signal if that smoke test fails. The bootstrap also preloads Letta's required NLTK `punkt_tab` data into `infra/letta/nltk_data/` and the project builds a small Letta wrapper image so cached NLTK data is used without relying on an online NLTK index during app startup. For Ollama, the phase-1 embedding default is `qwen3-embedding:0.6b`, and the bootstrap uses the documented empty-request `keep_alive` preload path, retries it a few times, and can be tuned with `OLLAMA_PRELOAD_ATTEMPTS` and `OLLAMA_PRELOAD_DELAY_SECONDS` in `infra/env/.env`.
 
 If Letta is slow to initialize on a given machine, increase `LETTA_READY_TIMEOUT_SECONDS` in `infra/env/.env`.
 
-Then inspect or stop it with:
+Then inspect, stop, or fully reset it with:
 
 ```bash
 bash scripts/status_dev_stack.sh
 bash scripts/stop_dev_stack.sh
+bash scripts/clean_dev_stack.sh --yes
 ```
 
 See [docs/index.md](docs/index.md) for the living documentation, especially

@@ -68,6 +68,17 @@ preflight_checks() {
   validate_nvidia_runtime
 }
 
+is_wsl_environment() {
+  if grep -qiE '(microsoft|wsl)' /proc/sys/kernel/osrelease 2>/dev/null; then
+    return 0
+  fi
+  grep -qiE '(microsoft|wsl)' /proc/version 2>/dev/null
+}
+
+docker_gpu_smoke_test() {
+  docker run --pull missing --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi >/dev/null
+}
+
 validate_nvidia_runtime() {
   if ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
     print_error "Docker does not report an NVIDIA runtime. Install/configure the NVIDIA Container Toolkit first."
@@ -75,8 +86,28 @@ validate_nvidia_runtime() {
     exit 1
   fi
 
+  local missing_persistenced_socket=false
   if [[ ! -S /run/nvidia-persistenced/socket ]]; then
-    print_error "Missing NVIDIA persistence daemon socket: /run/nvidia-persistenced/socket"
+    missing_persistenced_socket=true
+    # Docker Desktop on Windows exposes GPUs to WSL2 through GPU-PV. In that setup the Linux distro
+    # may not have the native nvidia-persistenced socket even though Docker GPU containers work.
+    if is_wsl_environment; then
+      print_info "WSL2 detected; skipping the native nvidia-persistenced socket requirement and validating GPU containers directly."
+    else
+      # On a native Ubuntu host this socket is still a useful troubleshooting signal, but the real
+      # source of truth is whether Docker can start a GPU-enabled container successfully.
+      print_info "nvidia-persistenced socket is missing; falling back to a real Docker GPU smoke test."
+    fi
+  fi
+
+  print_info "Validating Docker GPU access with a one-shot nvidia-smi container."
+  if docker_gpu_smoke_test; then
+    print_info "Docker GPU access is working."
+    return 0
+  fi
+
+  if [[ "$missing_persistenced_socket" == "true" ]] && ! is_wsl_environment; then
+    print_error "Docker GPU validation failed and /run/nvidia-persistenced/socket is missing."
     if command -v systemctl >/dev/null 2>&1; then
       if systemctl list-unit-files | grep -q '^nvidia-persistenced\.service'; then
         print_error "Start it with: sudo systemctl enable --now nvidia-persistenced"
@@ -84,9 +115,11 @@ validate_nvidia_runtime() {
         print_error "Install the NVIDIA driver component that provides nvidia-persistenced, then enable the service."
       fi
     fi
-    print_error "After that, verify GPU containers with: docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi"
-    exit 1
+  else
+    print_error "Docker GPU validation failed even though the NVIDIA runtime is present."
   fi
+  print_error "Validate manually with: docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi"
+  exit 1
 }
 
 sync_workspace() {
@@ -217,7 +250,7 @@ preload_chat_model() {
   OLLAMA_MODEL="$OLLAMA_MODEL_ALIAS:latest" \
   OLLAMA_PRELOAD_ATTEMPTS="$OLLAMA_PRELOAD_ATTEMPTS" \
   OLLAMA_PRELOAD_DELAY_SECONDS="$OLLAMA_PRELOAD_DELAY_SECONDS" \
-  uv run python - <<'PY2'
+  uv run --with httpx python - <<'PY2'
 from __future__ import annotations
 
 import json
