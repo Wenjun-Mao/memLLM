@@ -5,23 +5,23 @@ from dataclasses import dataclass, field
 from itertools import count
 from typing import Protocol
 
-from loguru import logger
 from memllm_domain import (
+    ArchivalMemoryItem,
     LettaGatewayError,
     MemoryBlock,
+    MemoryBlockSeed,
     MemoryContext,
     MemoryDelta,
-    MemoryPassage,
     MemorySnapshot,
-    SharedBlockSeed,
+    MemoryWriteOperation,
 )
 
 
 class LettaGateway(Protocol):
-    def upsert_shared_blocks(
+    def upsert_shared_memory_blocks(
         self,
         *,
-        blocks: list[SharedBlockSeed],
+        blocks: list[MemoryBlockSeed],
         existing_block_ids: dict[str, str] | None = None,
     ) -> dict[str, str]: ...
 
@@ -34,7 +34,7 @@ class LettaGateway(Protocol):
         embedding: str,
         llm_config: LettaLLMConfig | None = None,
         embedding_config: LettaEmbeddingConfig | None = None,
-        initial_human_block: str,
+        initial_user_memory: str,
     ) -> str: ...
 
     def get_memory_context(self, *, agent_id: str, query: str, top_k: int) -> MemoryContext: ...
@@ -45,11 +45,16 @@ class LettaGateway(Protocol):
         user_id: str,
         character_id: str,
         agent_id: str | None,
-        shared_blocks: list[SharedBlockSeed] | None = None,
-        passage_limit: int = 10,
+        shared_memory_blocks: list[MemoryBlockSeed] | None = None,
+        archival_memory_limit: int = 10,
     ) -> MemorySnapshot: ...
 
-    def apply_memory_delta(self, *, agent_id: str, delta: MemoryDelta) -> None: ...
+    def apply_memory_delta(
+        self,
+        *,
+        agent_id: str,
+        delta: MemoryDelta,
+    ) -> list[MemoryWriteOperation]: ...
 
     def delete_session_agent(self, *, agent_id: str) -> None: ...
 
@@ -83,6 +88,39 @@ class LettaEmbeddingConfig:
     chunk_size: int = 300
 
 
+def _shared_block_metadata(
+    shared_memory_blocks: list[MemoryBlockSeed] | None,
+) -> dict[str, MemoryBlockSeed]:
+    return {block.label: block for block in shared_memory_blocks or []}
+
+
+def _apply_block_seed_metadata(
+    *,
+    memory_blocks: list[MemoryBlock],
+    shared_memory_blocks: list[MemoryBlockSeed] | None,
+) -> list[MemoryBlock]:
+    metadata = _shared_block_metadata(shared_memory_blocks)
+    decorated: list[MemoryBlock] = []
+    for block in memory_blocks:
+        if block.scope != 'shared':
+            decorated.append(block)
+            continue
+        seed = metadata.get(block.label)
+        if seed is None:
+            decorated.append(block)
+            continue
+        decorated.append(
+            block.model_copy(
+                update={
+                    'description': seed.description,
+                    'limit': seed.limit,
+                    'read_only': seed.read_only,
+                }
+            )
+        )
+    return decorated
+
+
 class RealLettaGateway:
     def __init__(self, *, base_url: str, api_key: str | None = None) -> None:
         from letta_client import Letta
@@ -92,10 +130,10 @@ class RealLettaGateway:
             kwargs['api_key'] = api_key
         self._client = Letta(**kwargs)
 
-    def upsert_shared_blocks(
+    def upsert_shared_memory_blocks(
         self,
         *,
-        blocks: list[SharedBlockSeed],
+        blocks: list[MemoryBlockSeed],
         existing_block_ids: dict[str, str] | None = None,
     ) -> dict[str, str]:
         existing_block_ids = existing_block_ids or {}
@@ -119,11 +157,11 @@ class RealLettaGateway:
         embedding: str,
         llm_config: LettaLLMConfig | None = None,
         embedding_config: LettaEmbeddingConfig | None = None,
-        initial_human_block: str,
+        initial_user_memory: str,
     ) -> str:
         create_kwargs: dict[str, object] = {
             'name': agent_name,
-            'memory_blocks': [{'label': 'human', 'value': initial_human_block}],
+            'memory_blocks': [{'label': 'human', 'value': initial_user_memory}],
             'block_ids': shared_block_ids,
         }
         if llm_config and embedding_config:
@@ -151,7 +189,7 @@ class RealLettaGateway:
     def get_memory_context(self, *, agent_id: str, query: str, top_k: int) -> MemoryContext:
         try:
             block_page = self._client.agents.blocks.list(agent_id=agent_id)
-            blocks = [
+            memory_blocks = [
                 MemoryBlock(
                     label=block.label,
                     value=block.value,
@@ -164,20 +202,20 @@ class RealLettaGateway:
                 result = self._client.agents.passages.search(
                     agent_id=agent_id, query=query, top_k=top_k
                 )
-                passage_items = getattr(result, 'passages', [])
+                archival_items = getattr(result, 'passages', [])
             else:
-                passage_items = _iter_page_items(
+                archival_items = _iter_page_items(
                     self._client.agents.passages.list(agent_id=agent_id, limit=top_k)
                 )
-            passages = [
-                MemoryPassage(
-                    text=getattr(passage, 'text', ''),
-                    memory_id=getattr(passage, 'id', None),
-                    score=getattr(passage, 'score', None),
+            archival_memory = [
+                ArchivalMemoryItem(
+                    text=getattr(item, 'text', ''),
+                    memory_id=getattr(item, 'id', None),
+                    score=getattr(item, 'score', None),
                 )
-                for passage in passage_items
+                for item in archival_items
             ]
-            return MemoryContext(blocks=blocks, passages=passages)
+            return MemoryContext(memory_blocks=memory_blocks, archival_memory=archival_memory)
         except Exception as exc:  # noqa: BLE001
             raise LettaGatewayError('Failed to retrieve Letta memory context.') from exc
 
@@ -187,40 +225,72 @@ class RealLettaGateway:
         user_id: str,
         character_id: str,
         agent_id: str | None,
-        shared_blocks: list[SharedBlockSeed] | None = None,
-        passage_limit: int = 10,
+        shared_memory_blocks: list[MemoryBlockSeed] | None = None,
+        archival_memory_limit: int = 10,
     ) -> MemorySnapshot:
         if not agent_id:
             return MemorySnapshot(
                 user_id=user_id,
                 character_id=character_id,
                 agent_id=None,
-                blocks=[
-                    MemoryBlock(label=block.label, value=block.value, scope='shared')
-                    for block in shared_blocks or []
+                memory_blocks=[
+                    MemoryBlock(
+                        label=block.label,
+                        value=block.value,
+                        scope='shared',
+                        description=block.description,
+                        limit=block.limit,
+                        read_only=block.read_only,
+                    )
+                    for block in shared_memory_blocks or []
                 ],
-                passages=[],
+                archival_memory=[],
             )
 
-        context = self.get_memory_context(agent_id=agent_id, query='', top_k=passage_limit)
+        context = self.get_memory_context(agent_id=agent_id, query='', top_k=archival_memory_limit)
         return MemorySnapshot(
             user_id=user_id,
             character_id=character_id,
             agent_id=agent_id,
-            blocks=context.blocks,
-            passages=context.passages,
+            memory_blocks=_apply_block_seed_metadata(
+                memory_blocks=context.memory_blocks,
+                shared_memory_blocks=shared_memory_blocks,
+            ),
+            archival_memory=context.archival_memory,
         )
 
-    def apply_memory_delta(self, *, agent_id: str, delta: MemoryDelta) -> None:
+    def apply_memory_delta(
+        self,
+        *,
+        agent_id: str,
+        delta: MemoryDelta,
+    ) -> list[MemoryWriteOperation]:
+        operations: list[MemoryWriteOperation] = []
         try:
-            if delta.human_block_value:
+            if delta.user_memory_block_value:
                 self._client.agents.blocks.update(
                     agent_id=agent_id,
                     block_label='human',
-                    value=delta.human_block_value,
+                    value=delta.user_memory_block_value,
                 )
-            for passage in delta.passages:
-                self._client.agents.passages.create(agent_id=agent_id, text=passage)
+                operations.append(
+                    MemoryWriteOperation(
+                        kind='memory_block_update',
+                        target='human',
+                        value=delta.user_memory_block_value,
+                    )
+                )
+            for entry in delta.archival_memory_entries:
+                created = self._client.agents.passages.create(agent_id=agent_id, text=entry)
+                operations.append(
+                    MemoryWriteOperation(
+                        kind='archival_memory_insert',
+                        target='archival_memory',
+                        value=entry,
+                        memory_id=getattr(created, 'id', None),
+                    )
+                )
+            return operations
         except Exception as exc:  # noqa: BLE001
             raise LettaGatewayError('Failed to apply memory delta to Letta.') from exc
 
@@ -236,15 +306,15 @@ class _InMemoryAgent:
     agent_id: str
     name: str
     shared_block_ids: list[str]
-    blocks: dict[str, MemoryBlock] = field(default_factory=dict)
-    passages: list[MemoryPassage] = field(default_factory=list)
+    memory_blocks: dict[str, MemoryBlock] = field(default_factory=dict)
+    archival_memory: list[ArchivalMemoryItem] = field(default_factory=list)
 
 
 class InMemoryLettaGateway:
     def __init__(self) -> None:
         self._block_counter = count(1)
         self._agent_counter = count(1)
-        self.shared_blocks: dict[str, MemoryBlock] = {}
+        self.shared_memory_blocks: dict[str, MemoryBlock] = {}
         self.agents: dict[str, _InMemoryAgent] = {}
 
     def _next_block_id(self) -> str:
@@ -253,21 +323,24 @@ class InMemoryLettaGateway:
     def _next_agent_id(self) -> str:
         return f'agent-{next(self._agent_counter)}'
 
-    def upsert_shared_blocks(
+    def upsert_shared_memory_blocks(
         self,
         *,
-        blocks: list[SharedBlockSeed],
+        blocks: list[MemoryBlockSeed],
         existing_block_ids: dict[str, str] | None = None,
     ) -> dict[str, str]:
         existing_block_ids = existing_block_ids or {}
         result: dict[str, str] = {}
         for block in blocks:
             block_id = existing_block_ids.get(block.label, self._next_block_id())
-            self.shared_blocks[block_id] = MemoryBlock(
+            self.shared_memory_blocks[block_id] = MemoryBlock(
                 label=block.label,
                 value=block.value,
                 block_id=block_id,
                 scope='shared',
+                description=block.description,
+                limit=block.limit,
+                read_only=block.read_only,
             )
             result[block.label] = block_id
         return result
@@ -281,7 +354,7 @@ class InMemoryLettaGateway:
         embedding: str,
         llm_config: LettaLLMConfig | None = None,
         embedding_config: LettaEmbeddingConfig | None = None,
-        initial_human_block: str,
+        initial_user_memory: str,
     ) -> str:
         del model, embedding, llm_config, embedding_config
         agent_id = self._next_agent_id()
@@ -289,7 +362,9 @@ class InMemoryLettaGateway:
             agent_id=agent_id,
             name=agent_name,
             shared_block_ids=shared_block_ids,
-            blocks={'human': MemoryBlock(label='human', value=initial_human_block, scope='user')},
+            memory_blocks={
+                'human': MemoryBlock(label='human', value=initial_user_memory, scope='user')
+            },
         )
         return agent_id
 
@@ -297,12 +372,15 @@ class InMemoryLettaGateway:
         del query
         agent = self.agents[agent_id]
         shared = [
-            self.shared_blocks[block_id]
+            self.shared_memory_blocks[block_id]
             for block_id in agent.shared_block_ids
-            if block_id in self.shared_blocks
+            if block_id in self.shared_memory_blocks
         ]
-        passages = agent.passages[-top_k:] if top_k else []
-        return MemoryContext(blocks=[*shared, *agent.blocks.values()], passages=passages)
+        archival_memory = agent.archival_memory[-top_k:] if top_k else []
+        return MemoryContext(
+            memory_blocks=[*shared, *agent.memory_blocks.values()],
+            archival_memory=archival_memory,
+        )
 
     def get_memory_snapshot(
         self,
@@ -310,46 +388,78 @@ class InMemoryLettaGateway:
         user_id: str,
         character_id: str,
         agent_id: str | None,
-        shared_blocks: list[SharedBlockSeed] | None = None,
-        passage_limit: int = 10,
+        shared_memory_blocks: list[MemoryBlockSeed] | None = None,
+        archival_memory_limit: int = 10,
     ) -> MemorySnapshot:
-        del passage_limit
+        del archival_memory_limit
         if not agent_id:
             return MemorySnapshot(
                 user_id=user_id,
                 character_id=character_id,
                 agent_id=None,
-                blocks=[
-                    MemoryBlock(label=block.label, value=block.value, scope='shared')
-                    for block in shared_blocks or []
+                memory_blocks=[
+                    MemoryBlock(
+                        label=block.label,
+                        value=block.value,
+                        scope='shared',
+                        description=block.description,
+                        limit=block.limit,
+                        read_only=block.read_only,
+                    )
+                    for block in shared_memory_blocks or []
                 ],
-                passages=[],
+                archival_memory=[],
             )
-        context = self.get_memory_context(agent_id=agent_id, query='', top_k=100)
+
+        context = self.get_memory_context(agent_id=agent_id, query='', top_k=0)
         return MemorySnapshot(
             user_id=user_id,
             character_id=character_id,
             agent_id=agent_id,
-            blocks=context.blocks,
-            passages=context.passages,
+            memory_blocks=_apply_block_seed_metadata(
+                memory_blocks=context.memory_blocks,
+                shared_memory_blocks=shared_memory_blocks,
+            ),
+            archival_memory=self.agents[agent_id].archival_memory,
         )
 
-    def apply_memory_delta(self, *, agent_id: str, delta: MemoryDelta) -> None:
+    def apply_memory_delta(
+        self,
+        *,
+        agent_id: str,
+        delta: MemoryDelta,
+    ) -> list[MemoryWriteOperation]:
         agent = self.agents[agent_id]
-        if delta.human_block_value:
-            agent.blocks['human'] = MemoryBlock(
-                label='human', value=delta.human_block_value, scope='user'
+        operations: list[MemoryWriteOperation] = []
+        if delta.user_memory_block_value:
+            agent.memory_blocks['human'] = MemoryBlock(
+                label='human', value=delta.user_memory_block_value, scope='user'
             )
-        for passage_text in delta.passages:
-            if not any(existing.text == passage_text for existing in agent.passages):
-                agent.passages.append(
-                    MemoryPassage(
-                        text=passage_text,
-                        memory_id=f'memory-{len(agent.passages) + 1}',
+            operations.append(
+                MemoryWriteOperation(
+                    kind='memory_block_update',
+                    target='human',
+                    value=delta.user_memory_block_value,
+                )
+            )
+        for entry in delta.archival_memory_entries:
+            if not any(existing.text == entry for existing in agent.archival_memory):
+                memory_id = f'memory-{len(agent.archival_memory) + 1}'
+                agent.archival_memory.append(
+                    ArchivalMemoryItem(
+                        text=entry,
+                        memory_id=memory_id,
                     )
                 )
-        logger.debug('Applied memory delta to in-memory agent {}', agent_id)
+                operations.append(
+                    MemoryWriteOperation(
+                        kind='archival_memory_insert',
+                        target='archival_memory',
+                        value=entry,
+                        memory_id=memory_id,
+                    )
+                )
+        return operations
 
     def delete_session_agent(self, *, agent_id: str) -> None:
         self.agents.pop(agent_id, None)
-        logger.debug('Deleted in-memory agent {}', agent_id)

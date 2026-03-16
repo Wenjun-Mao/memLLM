@@ -5,7 +5,12 @@ from typing import Protocol
 
 import httpx
 from loguru import logger
-from memllm_domain import CharacterRecord, MemoryContext, MemoryDelta
+from memllm_domain import (
+    CharacterRecord,
+    MemoryContext,
+    MemoryDelta,
+    MemoryExtractionResult,
+)
 
 
 class MemoryExtractor(Protocol):
@@ -18,7 +23,7 @@ class MemoryExtractor(Protocol):
         memory_context: MemoryContext,
         user_message: str,
         assistant_message: str,
-    ) -> MemoryDelta: ...
+    ) -> MemoryExtractionResult: ...
 
 
 class HeuristicMemoryExtractor:
@@ -31,15 +36,32 @@ class HeuristicMemoryExtractor:
         memory_context: MemoryContext,
         user_message: str,
         assistant_message: str,
-    ) -> MemoryDelta:
-        current_human = memory_context.block_value('human') or character.memory.initial_human_block
+    ) -> MemoryExtractionResult:
+        current_human = (
+            memory_context.block_value('human') or character.memory.initial_user_memory
+        )
         fact_line = f'- Recent topic: {user_message.strip()}'
         if fact_line not in current_human:
             updated_human = f'{current_human}\n{fact_line}'.strip()
         else:
             updated_human = current_human
-        passage = f'User: {user_message.strip()}\nAssistant: {assistant_message.strip()}'
-        return MemoryDelta(human_block_value=updated_human, passages=[passage])
+        archival_entry = f'User: {user_message.strip()}\nAssistant: {assistant_message.strip()}'
+        delta = MemoryDelta(
+            user_memory_block_value=updated_human,
+            archival_memory_entries=[archival_entry],
+        )
+        return MemoryExtractionResult(
+            delta=delta,
+            request_payload={
+                'mode': 'heuristic',
+                'existing_user_memory': current_human,
+                'turn': {
+                    'user': user_message,
+                    'assistant': assistant_message,
+                },
+            },
+            response_payload=delta.model_dump(mode='json'),
+        )
 
 
 class OllamaJsonMemoryExtractor:
@@ -58,28 +80,34 @@ class OllamaJsonMemoryExtractor:
         memory_context: MemoryContext,
         user_message: str,
         assistant_message: str,
-    ) -> MemoryDelta:
-        system_prompt = (
-            'You maintain durable user memory for a chatbot. '
+    ) -> MemoryExtractionResult:
+        extractor_instructions = (
+            'You maintain durable Letta user memory for a chatbot. '
             'Return exactly one compact JSON object with keys '
-            '`human_block_value` and `passages`. '
-            '`human_block_value` must be a concise replacement for the user\'s Letta human block. '
-            '`passages` must be a JSON array of durable conversation snippets worth storing. '
+            '`user_memory_block_value` and `archival_memory_entries`. '
+            '`user_memory_block_value` must be a concise replacement for the user\'s Letta '
+            '`human` memory block. '
+            '`archival_memory_entries` must be a JSON array of durable conversation snippets '
+            'worth storing in archival memory. '
             'Do not wrap the JSON in markdown.'
         )
         context_dump = {
             'character': character.display_name,
-            'persona': character.persona,
-            'existing_human_block': memory_context.block_value('human') or '',
-            'relevant_blocks': [block.model_dump() for block in memory_context.blocks],
-            'relevant_passages': [passage.model_dump() for passage in memory_context.passages],
+            'system_instructions': character.system_instructions,
+            'existing_user_memory': memory_context.block_value('human') or '',
+            'memory_blocks': [
+                block.model_dump(mode='json') for block in memory_context.memory_blocks
+            ],
+            'retrieved_archival_memory': [
+                item.model_dump(mode='json') for item in memory_context.archival_memory
+            ],
             'turn': {
                 'user': user_message,
                 'assistant': assistant_message,
             },
         }
         prompt = (
-            f'<|im_start|>system\n{system_prompt}<|im_end|>\n'
+            f'<|im_start|>system\n{extractor_instructions}<|im_end|>\n'
             f'<|im_start|>user\n{json.dumps(context_dump, ensure_ascii=False)}<|im_end|>\n'
             '<|im_start|>assistant\n'
         )
@@ -91,30 +119,53 @@ class OllamaJsonMemoryExtractor:
             'keep_alive': -1,
             'options': {'temperature': 0},
         }
+        request_debug = {
+            'url': f'{self._base_url}/api/generate',
+            'payload': payload,
+        }
 
         try:
             with httpx.Client(timeout=self._timeout_seconds) as client:
-                response = client.post(f'{self._base_url}/api/generate', json=payload)
+                response = client.post(request_debug['url'], json=payload)
                 response.raise_for_status()
             body = response.json()
             content = self._cleanup_generated_text(body['response'])
             parsed = json.loads(self._extract_json_object(content))
             delta = MemoryDelta(
-                human_block_value=parsed.get('human_block_value'),
-                passages=[str(item) for item in parsed.get('passages', []) if str(item).strip()],
+                user_memory_block_value=parsed.get('user_memory_block_value'),
+                archival_memory_entries=[
+                    str(item)
+                    for item in parsed.get('archival_memory_entries', [])
+                    if str(item).strip()
+                ],
             )
-            if not delta.human_block_value and not delta.passages:
+            if not delta.user_memory_block_value and not delta.archival_memory_entries:
                 raise ValueError('extractor returned an empty memory delta')
-            return delta
+            return MemoryExtractionResult(
+                delta=delta,
+                request_payload=request_debug,
+                response_payload={
+                    'raw': body,
+                    'parsed': delta.model_dump(mode='json'),
+                },
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 'ollama_json extractor failed, falling back to heuristic extractor: {}', exc
             )
-            return self._fallback.extract(
+            fallback = self._fallback.extract(
                 character=character,
                 memory_context=memory_context,
                 user_message=user_message,
                 assistant_message=assistant_message,
+            )
+            return MemoryExtractionResult(
+                delta=fallback.delta,
+                request_payload=request_debug,
+                response_payload={
+                    'fallback_reason': str(exc),
+                    'fallback_result': fallback.model_dump(mode='json'),
+                },
             )
 
     @staticmethod

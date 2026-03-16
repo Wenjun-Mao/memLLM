@@ -2,162 +2,148 @@
 
 ## Why This Exists
 
-Character manifests are doing two jobs at once:
+Character manifests now define two different things clearly and separately:
 
-- defining the character and reply-provider behavior
-- seeding the Letta memory that every user-agent session starts from
+- the final reply-provider behavior for a character
+- the Letta memory seeded for each user-agent session
 
-That is why some fields can look similar if the authoring split is not clear.
+The current schema is a clean dev-phase break. Older keys such as `persona`, `system_prompt`,
+`shared_blocks`, and `shared_passages` are intentionally no longer supported.
+
+## Old to New Mapping
+
+| Old key | New key | Meaning now |
+|---|---|---|
+| `persona` + `system_prompt` | `system_instructions` | One instruction layer sent to the final reply provider |
+| `shared_blocks` | `shared_memory_blocks` | Shared Letta memory blocks attached to every agent for the character |
+| `shared_passages` | `archival_memory_seed` | Real archival-memory items copied into each new agent |
+| `memory.archival_search_limit` | `memory.archival_memory_search_limit` | Retrieval count for live turns |
+| `memory.snapshot_passage_limit` | `memory.snapshot_archival_memory_limit` | Snapshot count in the Dev UI |
+| `memory.recent_message_window` | `memory.conversation_history_window` | Recent turn window included in the final call |
+| `memory.initial_human_block` | `memory.initial_user_memory` | Initial Letta `human` block |
 
 ## Important Definitions
 
-### `shared_blocks`
+### `system_instructions`
 
-`shared_blocks` are shared across every Letta agent for the same character.
-
-For example, if three different users talk to `lin_xiaotang`, they each get a separate Letta
-agent, but all three agents attach the same shared blocks for that character.
-
-They are not shared across different characters.
-
-### `shared_passages`
-
-`shared_passages` in the manifest are not the same thing as archival conversation passages.
-
-In the current code, the manifest loader converts `shared_passages` into a single shared Letta
-block called `lore`.
-
-So this:
-
-```yaml
-shared_passages:
-  - fact A
-  - fact B
-```
-
-becomes one shared block whose label is `lore` and whose value is a bullet list.
-
-### `lore`
-
-`lore` is just the block label the app currently uses for synthesized evergreen character facts
-coming from `shared_passages`.
-
-It is not a special Letta primitive. It is an app convention.
-
-### `Passages` in the UI
-
-The `Passages` section in the dev UI memory snapshot is different from manifest
-`shared_passages`.
-
-Those UI passages are real archival memory items retrieved from previous conversations for the
-current `(user_id, character_id)` pair.
-
-## Recommended Split Between Fields
-
-### `persona`
-
-Use `persona` for identity and durable character truth.
+`system_instructions` is the full instruction layer used for the final reply-provider call.
 
 Good fit:
 
-- who the character is
-- age, background, temperament
-- the stable relationship style the character should maintain
+- identity and stable character truth
+- language and tone rules
+- honesty constraints
+- formatting bans
+- output-length preferences
 
-Avoid putting too many hard formatting rules here.
+This field is shown in the Dev UI under `Prompt Pipeline -> System Instructions`.
 
-### `system_prompt`
+### `shared_memory_blocks`
 
-Use `system_prompt` for runtime behavior rules.
+`shared_memory_blocks` are shared across every Letta agent for the same character.
 
-Good fit:
+If three users talk to `lin_xiaotang`, they each get a separate Letta agent, but all three agents
+attach the same shared memory blocks for that character.
 
-- output language
-- style constraints
-- forbidden formats
-- safety or honesty rules
-- length preferences
+These blocks are part of the working context.
 
-This is the best place for instructions like "do not write stage directions in parentheses."
-
-### `shared_blocks`
-
-Use `shared_blocks` for reusable, separately inspectable memory facets that you want Letta to carry
-for every user of that character.
-
-Good fit:
+Use them for reusable, separately inspectable facets such as:
 
 - `style`
 - `background`
 - `relationship_rules`
 - `safety_overrides`
 
-Try to keep each block focused on one job. If a block just restates the full `persona`, it is
-usually redundant.
+### `archival_memory_seed`
 
-### `shared_passages`
+`archival_memory_seed` is no longer a fake lore block.
 
-Use `shared_passages` for short evergreen lore facts that do not need their own labeled block.
+Each item is copied into the new agent's archival memory once, when that `(user_id, character_id)`
+pair is first created.
 
-Good fit:
+That means:
 
-- likes and dislikes
-- recurring motifs
-- standing interaction principles
+- it is not shared live across all users
+- it is stored as real archival memory
+- it can later appear in retrieval and in the Dev UI's archival-memory views
 
-If the facts are large or conceptually separate, prefer a named `shared_block` instead.
+Use it for evergreen facts or motifs that should behave like retrievable archival memory.
 
-## What The Current Runtime Actually Does
+### `memory.initial_user_memory`
 
-The current prompt builder does two important things:
+This is the starting Letta `human` block for a new user-agent pair.
 
-1. `system_content` includes `persona` plus `system_prompt`
-2. `user_content` includes the flattened Letta memory blocks, which includes the seeded `persona`
-   block again
+Use it for a neutral initial summary such as:
 
-So yes: some overlap in the final provider call is real today.
+- no stable preferences are known yet
+- the relationship is new
+- no confirmed nickname or long-term context exists yet
 
-That does not mean manifests should be sloppy, but it does mean you will see `persona` twice in the
-captured final call unless we later change the prompt-building code.
+## How the Current Runtime Uses These Fields
 
-## Writing Perspective: `你` vs `她`
+For the current phase-1 runtime:
 
-For Chinese characters, mixed perspective is usually a prompt-authoring mistake unless it is very
-intentional.
+- Letta stores and retrieves memory
+- the app still performs post-turn memory extraction with local Ollama
+- the final user-facing reply still goes to the configured provider, which may be DouBao or Ollama
 
-Recommended rule:
+The final provider call is assembled from:
 
-- use `你` for instructions addressed to the model
-- use neutral noun phrases for factual notes when possible
-- avoid mixing `你` and `她` across adjacent fields unless the distinction is deliberate
+- `system_instructions`
+- working-context memory blocks
+- retrieved archival memory
+- the recent conversation window
 
-For example, these are cleaner than third-person prose in `background` or `lore`:
+So if you inspect the Dev UI, the pipeline is:
 
-```yaml
-- label: background
-  value: |
-    你出生在苏州旧巷，外婆开过点心铺，也因此很会做中式甜点。
-```
+- `System Instructions`
+- `Working Context`
+- `Conversation Window`
+- `Retrieved Archival Memory`
+- `Final Provider Call`
 
-or:
+## Authoring Guidance
 
-```yaml
-shared_passages:
-  - 偏好：桂花、白山茶、茉莉、雨后石板路、傍晚冒热气的甜汤。
-```
+### Put identity and rules in one place
 
-If a manifest mixes `你` and `她` without a clear reason, that is usually not a code bug, but it is prompt-style inconsistency. Treat it as authoring debt and clean it up.
+Because `system_instructions` replaced the old `persona` + `system_prompt` split, do not try to
+recreate the old split manually. Write one coherent instruction block instead.
 
-## Authoring Checklist
+### Keep shared blocks focused
 
-Before adding a new character, check:
+Do not duplicate the whole character description into every shared memory block.
+Each block should have one clear job.
 
-- `persona` explains identity, not formatting rules
-- `system_prompt` explains behavior constraints, not biography
-- each `shared_block` has one clear purpose
-- `shared_passages` are evergreen facts, not long paragraphs
-- Chinese perspective is consistent
-- there is minimal repetition across `persona`, `system_prompt`, and shared memory
+### Use archival seed only for retrievable facts
+
+`archival_memory_seed` should be a list of short, durable snippets.
+Do not use it for long essays or giant instruction paragraphs.
+
+### Chinese perspective rule
+
+For Chinese characters, keep perspective consistent.
+Usually that means:
+
+- use `你` for direct instructions to the model
+- use concise noun-phrase facts for archival seed items
+- avoid mixing `你` and `她` unless the distinction is very deliberate
+
+## Provider Parameter Notes
+
+The template includes brief inline explanations for each reply-provider field, including:
+
+- `kind`: which adapter handles the final reply call
+- `base_url`: base server address for providers such as Ollama
+- `endpoint`: full target URL for `custom_simple_http`
+- `model`: provider-side model identifier
+- `transport`: HTTP method for `custom_simple_http`
+- `timeout_seconds`: per-request timeout
+- `headers`: optional request headers
+- `extra.temperature`: randomness control for supported providers
+- `extra.num_predict`: output-length cap for Ollama native generation
+
+Remember that `extra` is provider-specific. If a field is not recognized by that adapter, it will
+be ignored or passed through depending on the provider implementation.
 
 ## Template
 

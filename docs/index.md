@@ -10,6 +10,7 @@ integration notes, and deferred work in the repo so later phases do not depend o
 - Canonical dev topology: Docker-based Postgres/pgvector + Letta + Ollama on Ubuntu
 - Memory operations UI: Letta Desktop or ADE in self-hosted server mode
 - Product chat UI: local Streamlit app backed by the FastAPI service
+- Canonical vocabulary: Letta terms first, MemGPT paper mapping second
 
 ## Start Here
 
@@ -19,14 +20,17 @@ integration notes, and deferred work in the repo so later phases do not depend o
 - [Chat Flow](architecture/chat_flow.md)
 - [Runtime Stack](architecture/runtime_stack.md)
 - [Memory Model](architecture/memory_model.md)
+- [Letta vs MemGPT Mapping](architecture/letta_memgpt_mapping.md)
 - [Ubuntu Dev Stack](runbooks/ubuntu_dev_stack.md)
-- [Phase 2 Prep](planning/phase_2_prep.md)
+- [Manifest Guide](reference/character_manifest_guide.md)
+- [Next Phase: Letta-Native Memory Architecture](planning/letta_native_next_phase.md)
 
 ## Planning
 
 - [planning/current_status.md](planning/current_status.md)
 - [planning/phase_1_scope.md](planning/phase_1_scope.md)
 - [planning/phase_2_prep.md](planning/phase_2_prep.md)
+- [planning/letta_native_next_phase.md](planning/letta_native_next_phase.md)
 - [planning/roadmap.md](planning/roadmap.md)
 
 ## Architecture
@@ -35,6 +39,7 @@ integration notes, and deferred work in the repo so later phases do not depend o
 - [architecture/chat_flow.md](architecture/chat_flow.md)
 - [architecture/runtime_stack.md](architecture/runtime_stack.md)
 - [architecture/memory_model.md](architecture/memory_model.md)
+- [architecture/letta_memgpt_mapping.md](architecture/letta_memgpt_mapping.md)
 
 ## Integrations
 
@@ -53,8 +58,8 @@ integration notes, and deferred work in the repo so later phases do not depend o
 
 ## Reference
 
+- [reference/character_manifest_guide.md](reference/character_manifest_guide.md)
 - [style_guide.md](style_guide.md)
 - [uv_monorepo_notes.md](uv_monorepo_notes.md)
 - [reference/style_guide.md](reference/style_guide.md)
-- [reference/character_manifest_guide.md](reference/character_manifest_guide.md)
 - [reference/uv_monorepo_notes.md](reference/uv_monorepo_notes.md)

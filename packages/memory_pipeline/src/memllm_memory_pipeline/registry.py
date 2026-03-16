@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from memllm_domain import CharacterRecord, MemoryContext, MemoryDelta
+from memllm_domain import CharacterRecord, MemoryContext, MemoryExtractionResult
 
 from memllm_memory_pipeline.extractors import (
     HeuristicMemoryExtractor,
@@ -26,7 +26,7 @@ class MemoryExtractorRegistry:
         memory_context: MemoryContext,
         user_message: str,
         assistant_message: str,
-    ) -> MemoryDelta:
+    ) -> MemoryExtractionResult:
         extractor = self._extractors[kind]
         return extractor.extract(
             character=character,

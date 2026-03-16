@@ -11,7 +11,7 @@ from memllm_reply_providers import ReplyProviderRegistry
 
 
 class FakeReplyProvider:
-    kind = "ollama_chat"
+    kind = 'ollama_chat'
 
     def generate(self, config: ProviderConfig, request):  # type: ignore[override]
         del config
@@ -32,64 +32,67 @@ class FakeReplyProvider:
 
 def test_seed_chat_and_memory_flow() -> None:
     settings = ApiSettings(
-        manifest_dir=Path("characters/manifests"),
-        database_backend="memory",
-        letta_mode="memory",
-        memory_extractor_kind="heuristic",
+        manifest_dir=Path('characters/manifests'),
+        database_backend='memory',
+        letta_mode='memory',
+        memory_extractor_kind='heuristic',
+        debug_inline_memory_writeback=True,
     )
     app = create_app(settings)
     app.state.container.orchestrator._reply_providers = ReplyProviderRegistry([FakeReplyProvider()])  # noqa: SLF001
 
     with TestClient(app) as client:
-        seed_response = client.post("/seed/characters")
+        seed_response = client.post('/seed/characters')
         assert seed_response.status_code == 200
-        assert len(seed_response.json()["seeded"]) >= 2
+        assert len(seed_response.json()['seeded']) >= 2
 
-        characters_response = client.get("/characters")
+        characters_response = client.get('/characters')
         assert characters_response.status_code == 200
-        first_character = characters_response.json()[0]["character_id"]
+        first_character = characters_response.json()[0]['character_id']
 
         chat_response = client.post(
-            "/chat",
+            '/chat',
             json={
-                "user_id": "dev-user",
-                "character_id": first_character,
-                "message": "remember tea",
+                'user_id': 'dev-user',
+                'character_id': first_character,
+                'message': 'remember tea',
             },
         )
         assert chat_response.status_code == 200
         chat_payload = chat_response.json()
-        assert chat_payload["reply"] == "stub::remember tea"
-        assert chat_payload["debug"]["final_request"]["url"] == 'http://ollama:11434/api/generate'
+        assert chat_payload['reply'] == 'stub::remember tea'
+        assert chat_payload['debug']['final_provider_call']['url'] == 'http://ollama:11434/api/generate'
         assert any(
-            step["label"] == 'letta_memory_context'
-            for step in chat_payload["debug"]["steps"]
+            event['kind'] == 'archival_memory_search'
+            for event in chat_payload['debug']['trace_events']
         )
+        assert chat_payload['debug']['memory_writeback']['extractor_kind'] == 'heuristic'
 
         sessions_response = client.get('/sessions')
         assert sessions_response.status_code == 200
         sessions_payload = sessions_response.json()
         assert len(sessions_payload) == 1
-        assert sessions_payload[0]["user_id"] == 'dev-user'
-        assert sessions_payload[0]["character_id"] == first_character
+        assert sessions_payload[0]['user_id'] == 'dev-user'
+        assert sessions_payload[0]['character_id'] == first_character
 
-        memory_response = client.get(f"/memory/dev-user/{first_character}")
+        memory_response = client.get(f'/memory/dev-user/{first_character}')
         assert memory_response.status_code == 200
         snapshot = memory_response.json()
-        assert snapshot["agent_id"] is not None
-        assert any(block["label"] == "human" for block in snapshot["blocks"])
+        assert snapshot['agent_id'] is not None
+        assert any(block['label'] == 'human' for block in snapshot['memory_blocks'])
+        assert 'archival_memory' in snapshot
 
         delete_response = client.delete(f'/sessions/dev-user/{first_character}')
         assert delete_response.status_code == 200
-        assert delete_response.json()["character_id"] == first_character
+        assert delete_response.json()['character_id'] == first_character
 
         sessions_after_delete = client.get('/sessions')
         assert sessions_after_delete.status_code == 200
         assert sessions_after_delete.json() == []
 
-        memory_after_delete = client.get(f"/memory/dev-user/{first_character}")
+        memory_after_delete = client.get(f'/memory/dev-user/{first_character}')
         assert memory_after_delete.status_code == 200
-        assert memory_after_delete.json()["agent_id"] is None
+        assert memory_after_delete.json()['agent_id'] is None
 
 
 class _FakeJsonResponse:

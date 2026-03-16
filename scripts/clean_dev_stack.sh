@@ -7,7 +7,7 @@ source "$SCRIPT_DIR/_dev_stack_common.sh"
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/clean_dev_stack.sh --yes [--include-ollama-cache] [--include-gguf]
+Usage: bash scripts/clean_dev_stack.sh --yes [--preserve-memory] [--include-ollama-cache] [--include-gguf]
 
 Destructive cleanup for the phase-1 Docker dev stack.
 
@@ -24,18 +24,24 @@ What it keeps by default:
 
 Options:
   --yes                   Required confirmation flag.
+  --preserve-memory       Keep the Postgres volume, so Letta memory and app metadata survive.
   --include-ollama-cache  Also remove Ollama's Docker volume, which forces model re-downloads.
   --include-gguf          Also remove the downloaded GGUF from infra/ollama/models/.
 EOF
 }
 
 CONFIRMED=false
+PRESERVE_MEMORY=false
 REMOVE_OLLAMA_CACHE=false
 REMOVE_GGUF=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --yes)
       CONFIRMED=true
+      shift
+      ;;
+    --preserve-memory)
+      PRESERVE_MEMORY=true
       shift
       ;;
     --include-ollama-cache)
@@ -71,7 +77,9 @@ print_info "Stopping and removing Docker services and networks."
 compose_cmd down --remove-orphans
 
 # Postgres stores Letta memory and app metadata, so wiping this volume is the real reset path.
-if docker volume inspect "$POSTGRES_VOLUME" >/dev/null 2>&1; then
+# `--preserve-memory` exists because sometimes we want a container/network cleanup without losing
+# the current Letta state or app-side session metadata.
+if [[ "$PRESERVE_MEMORY" != "true" ]] && docker volume inspect "$POSTGRES_VOLUME" >/dev/null 2>&1; then
   print_info "Removing Docker volume $POSTGRES_VOLUME"
   docker volume rm "$POSTGRES_VOLUME" >/dev/null
 fi
@@ -93,19 +101,33 @@ if [[ "$REMOVE_GGUF" == "true" && -f "$MODEL_PATH" ]]; then
 fi
 
 print_info "Cleanup complete. Preserved assets:"
-if docker volume inspect "$OLLAMA_VOLUME" >/dev/null 2>&1; then
-  printf -- "- Ollama cache volume: %s\n" "$OLLAMA_VOLUME"
+if docker volume inspect "$POSTGRES_VOLUME" >/dev/null 2>&1; then
+  printf -- "- Postgres memory volume: %s
+" "$POSTGRES_VOLUME"
 else
-  printf -- "- Ollama cache volume: not present\n"
+  printf -- "- Postgres memory volume: not present
+"
+fi
+if docker volume inspect "$OLLAMA_VOLUME" >/dev/null 2>&1; then
+  printf -- "- Ollama cache volume: %s
+" "$OLLAMA_VOLUME"
+else
+  printf -- "- Ollama cache volume: not present
+"
 fi
 if [[ -f "$MODEL_PATH" ]]; then
-  printf -- "- GGUF: %s\n" "$MODEL_PATH"
+  printf -- "- GGUF: %s
+" "$MODEL_PATH"
 else
-  printf -- "- GGUF: not present\n"
+  printf -- "- GGUF: not present
+"
 fi
 if [[ -d "$LETTA_NLTK_DATA_DIR" ]]; then
-  printf -- "- Letta NLTK data: %s\n" "$LETTA_NLTK_DATA_DIR"
+  printf -- "- Letta NLTK data: %s
+" "$LETTA_NLTK_DATA_DIR"
 else
-  printf -- "- Letta NLTK data: not present\n"
+  printf -- "- Letta NLTK data: not present
+"
 fi
-printf -- "- Env file: %s\n" "$ENV_FILE"
+printf -- "- Env file: %s
+" "$ENV_FILE"

@@ -26,6 +26,6 @@ docs/           Planning, runbooks, ADRs, and references
 
 - `apps/` keeps user-facing entrypoints isolated from reusable code
 - `packages/` makes the memory, provider, and domain layers testable in isolation
-- `characters/` keeps persona definitions versioned with the code
+- `characters/` keeps versioned character manifests and seed definitions with the code
 - `infra/` makes the Ubuntu stack part of the project rather than tribal knowledge
 - `docs/` keeps architecture and next-phase information in repo truth

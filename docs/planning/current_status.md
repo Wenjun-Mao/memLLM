@@ -6,62 +6,36 @@ This file tracks what is actually built, what has been verified, and what still 
 
 - [x] The `uv` workspace installs from the repo root with `apps/*` and `packages/*`.
 - [x] The FastAPI app exposes `GET /health`, `GET /characters`, `POST /seed/characters`,
-  `POST /chat`, and `GET /memory/{user_id}/{character_id}`.
-- [x] Character seeding is idempotent in the current integration coverage.
-- [x] Chat sessions are isolated per `(user_id, character_id)` pair in the current integration
-  coverage.
+  `POST /chat`, `GET /memory/{user_id}/{character_id}`, `GET /sessions`, and session deletion.
+- [x] The repo now uses a Letta-aligned manifest/API schema with:
+  - `system_instructions`
+  - `shared_memory_blocks`
+  - `archival_memory_seed`
+  - `memory_blocks` and `archival_memory` in memory snapshots
+- [x] Old manifest keys such as `persona`, `system_prompt`, `shared_blocks`, and `shared_passages`
+  are rejected in integration coverage.
+- [x] `archival_memory_seed` is now stored as real per-agent archival memory instead of being
+  synthesized into a fake `lore` block.
+- [x] `/chat` now returns a structured debug payload with:
+  - `final_provider_call`
+  - `prompt_pipeline`
+  - `trace_events`
+  - `memory_writeback`
+- [x] In the dev stack, memory writeback runs inline by default so the current round trace includes
+  the local extractor call and Letta write operations.
+- [x] The Streamlit Dev UI has dedicated panels for `Final Provider Call`, `Prompt Pipeline`,
+  `Current-Round Memory Work`, `Memory Snapshot`, and `User-Agent Pair`.
 - [x] The repo contains a Docker Compose topology for `postgres`/`pgvector`, `ollama`, `letta`,
   the FastAPI API, and the Streamlit dev UI.
-- [x] The repo contains Ubuntu operator scripts for bootstrap, status inspection, shutdown, and destructive cleanup.
-- [x] The Qwen 3.5 9B `Q4_K_M` GGUF import path is standardized through `hf` into
-  `infra/ollama/models/`.
-- [x] The phase-1 Letta embedding default is now `qwen3-embedding:0.6b`, which preserves the current
-  `1024`-dimension Letta config while improving Chinese/multilingual alignment over the earlier
-  `mxbai-embed-large` default.
-- [x] `bash scripts/clean_dev_stack.sh --yes` removes the Docker stack and Postgres-backed Letta/app
-  data while preserving the Ollama cache by default, so pulled embedding/chat models and aliases are
-  reused across normal rebuilds. The downloaded GGUF, Letta NLTK data, and `infra/env/.env` are also
-  preserved unless explicitly removed.
-- [x] On a fresh Ubuntu 24.04 WSL2 clone, `bash scripts/bootstrap_ubuntu.sh --mode infra` brought
-  up Docker-hosted Postgres/pgvector, Ollama, and Letta, downloaded the GGUF, and created the
-  `memllm-qwen3.5-9b-q4km` alias.
-- [x] On the same WSL2 environment, the real Letta service created per-session agents against the
-  Docker-hosted Postgres instance when given explicit `llm_config` and `embedding_config`.
-- [x] On the same WSL2 environment, the Dockerized API and Dockerized Streamlit UI both started
-  successfully and exposed `localhost:8000` and `localhost:8501`.
-- [x] A live `/chat` request succeeded against the Docker stack for `calm_archivist` using the
-  imported Qwen GGUF through Ollama.
-- [x] After that live chat, `GET /memory/{user_id}/{character_id}` showed the Letta `human` block
-  and archival passages updated for the same `(user_id, character_id)` pair.
+- [x] The repo contains Ubuntu operator scripts for bootstrap, status inspection, shutdown, and cleanup.
+- [x] The phase-1 Letta embedding default is `qwen3-embedding:0.6b`.
 
 ## Implemented but Not Yet Fully Validated
 
-- [ ] Confirm `bash scripts/bootstrap_ubuntu.sh --mode api` and `--mode full` in a normal
-  interactive Ubuntu shell outside the Codex tool environment.
-- [ ] Click through the Streamlit UI end to end against the real Docker-backed stack after the API
-  fix, rather than validating only through direct HTTP calls.
-- [ ] Confirm Letta Desktop in self-hosted server mode can inspect the Docker-hosted Letta server
-  during a real dev session.
-- [ ] Repeat the smoke test on the target Ubuntu machine with the 24 GB RTX 4090 after the
-  `qwen3-embedding:0.6b` switch.
-
-## WSL2 Findings
-
-- Letta v0.16.6 did not sync the imported Ollama GGUF alias as an LLM because Ollama exposed it as
-  `completion`-only instead of advertising `tools` capability.
-- The app now works around that by creating Letta agents with explicit `llm_config` and
-  `embedding_config` instead of relying on Letta's synced provider handle.
-- The imported Qwen GGUF produced cleaner replies through Ollama's native `/api/generate` endpoint
-  with an explicit ChatML-style prompt than through `/v1/chat/completions`.
-- Character manifests can still declare `http://localhost:11434` for `ollama_chat`, but the API now
-  rewrites loopback Ollama URLs to the configured runtime override when it is running inside
-  Docker.
-- The local chat model can be preloaded and held resident in GPU memory; the current verified state
-  is `UNTIL Forever` in `ollama ps`.
-- On the WSL2 machine used here, the GPU was an 8 GB RTX 3080 Laptop GPU, and first-response
-  latency was high because Ollama had to swap between the embedding model and the 9B chat model.
-- On the current local Codex host, a fresh `--mode full` rebuild after cleanup is blocked by the
-  missing `/run/nvidia-persistenced/socket` host prerequisite before Docker GPU startup.
+- [ ] Click through the renamed Streamlit UI end to end against the real Docker-backed stack after this schema break.
+- [ ] Confirm the structured debug panels are easy to follow in a real coworker demo.
+- [ ] Confirm Letta Desktop in self-hosted server mode can inspect the Docker-hosted Letta server during a real dev session.
+- [ ] Repeat the smoke test on the target Ubuntu machine with the 24 GB RTX 4090 after the schema rename reset.
 
 ## How To Run Right Now
 
@@ -71,23 +45,15 @@ This file tracks what is actually built, what has been verified, and what still 
 2. `uv run pytest`
 3. `uv run ruff check .`
 
-### Ubuntu Stack
+### Clean Reset After This Schema Break
 
-1. Ensure Docker, Docker Compose, the NVIDIA runtime, Git, and `uv` are already installed.
-2. `bash scripts/bootstrap_ubuntu.sh --mode infra`
-3. `bash scripts/bootstrap_ubuntu.sh --mode api` or `bash scripts/bootstrap_ubuntu.sh --mode full`
-4. Open `http://localhost:8501` for the dev UI or `http://localhost:8000/docs` for the API once
-   the stack is healthy.
-5. `bash scripts/status_dev_stack.sh`
-6. `bash scripts/stop_dev_stack.sh`
-7. `bash scripts/clean_dev_stack.sh --yes` when you want to wipe Letta/app memory and rebuild from scratch
+1. `bash scripts/clean_dev_stack.sh --yes`
+2. `bash scripts/bootstrap_ubuntu.sh --mode full`
+3. Open `http://localhost:8501`
+4. Reseed if needed from the UI or `POST /seed/characters`
 
 ## Next Steps
 
-- [ ] Click through the Streamlit UI against the real stack and confirm the browser flow stays
-  healthy after the API container fix.
-- [ ] Run Letta Desktop/ADE against the Docker-hosted Letta server and document the exact workflow.
-- [ ] Benchmark the same flow on the 24 GB RTX 4090 host and tune model choices if needed.
-- [ ] Decide whether to keep the current explicit-config Letta workaround or replace it later with a
-  Letta/Ollama model-registration path once upstream behavior is clearer.
+- [ ] Validate the redesigned Dev UI against the real Docker stack.
+- [ ] Start the next Letta-native migration phase described in `planning/letta_native_next_phase.md`.
 - [ ] Keep this file updated whenever the implementation or verification state changes.

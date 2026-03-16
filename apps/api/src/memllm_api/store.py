@@ -96,17 +96,16 @@ class Base(DeclarativeBase):
 
 
 class CharacterRow(Base):
-    __tablename__ = "characters"
+    __tablename__ = 'characters'
 
     character_id: Mapped[str] = mapped_column(String(120), primary_key=True)
     display_name: Mapped[str] = mapped_column(String(200))
     description: Mapped[str] = mapped_column(Text())
-    persona: Mapped[str] = mapped_column(Text())
-    system_prompt: Mapped[str | None] = mapped_column(Text(), nullable=True)
+    system_instructions: Mapped[str] = mapped_column(Text())
     reply_provider: Mapped[dict] = mapped_column(JSON())
     memory_settings: Mapped[dict] = mapped_column(JSON())
-    shared_blocks: Mapped[list] = mapped_column(JSON())
-    shared_passages: Mapped[list] = mapped_column(JSON())
+    shared_memory_blocks: Mapped[list] = mapped_column(JSON())
+    archival_memory_seed: Mapped[list] = mapped_column(JSON())
     manifest_path: Mapped[str] = mapped_column(String(500))
     manifest_checksum: Mapped[str] = mapped_column(String(128))
     shared_block_ids: Mapped[dict] = mapped_column(JSON())
@@ -117,7 +116,7 @@ class CharacterRow(Base):
 
 
 class SessionRow(Base):
-    __tablename__ = "sessions"
+    __tablename__ = 'sessions'
 
     user_id: Mapped[str] = mapped_column(String(120), primary_key=True)
     character_id: Mapped[str] = mapped_column(String(120), primary_key=True)
@@ -130,7 +129,7 @@ class SessionRow(Base):
 
 
 class ChatTurnRow(Base):
-    __tablename__ = "chat_turns"
+    __tablename__ = 'chat_turns'
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(String(120), index=True)
@@ -148,12 +147,11 @@ def _row_to_character(row: CharacterRow) -> CharacterRecord:
         character_id=row.character_id,
         display_name=row.display_name,
         description=row.description,
-        persona=row.persona,
-        system_prompt=row.system_prompt,
+        system_instructions=row.system_instructions,
         reply_provider=row.reply_provider,
         memory=row.memory_settings,
-        shared_blocks=row.shared_blocks,
-        shared_passages=row.shared_passages,
+        shared_memory_blocks=row.shared_memory_blocks,
+        archival_memory_seed=row.archival_memory_seed,
         manifest_path=row.manifest_path,
         manifest_checksum=row.manifest_checksum,
         shared_block_ids=row.shared_block_ids,
@@ -163,8 +161,8 @@ def _row_to_character(row: CharacterRow) -> CharacterRecord:
 
 
 def _character_to_payload(record: CharacterRecord) -> dict:
-    payload = record.model_dump()
-    payload["memory_settings"] = payload.pop("memory")
+    payload = record.model_dump(mode='json')
+    payload['memory_settings'] = payload.pop('memory')
     return payload
 
 
@@ -240,14 +238,14 @@ class SQLAlchemyMetadataStore:
 
     def get_session(self, user_id: str, character_id: str) -> SessionRecord | None:
         with self._session_factory() as session:
-            row = session.get(SessionRow, {"user_id": user_id, "character_id": character_id})
+            row = session.get(SessionRow, {'user_id': user_id, 'character_id': character_id})
             return _row_to_session(row) if row else None
 
     def upsert_session(self, record: SessionRecord) -> SessionRecord:
-        payload = record.model_dump()
+        payload = record.model_dump(mode='json')
         with self._session_factory() as session:
             row = session.get(
-                SessionRow, {"user_id": record.user_id, "character_id": record.character_id}
+                SessionRow, {'user_id': record.user_id, 'character_id': record.character_id}
             )
             if row is None:
                 row = SessionRow(**payload)
@@ -261,7 +259,7 @@ class SQLAlchemyMetadataStore:
 
     def delete_session(self, user_id: str, character_id: str) -> SessionRecord | None:
         with self._session_factory() as session:
-            row = session.get(SessionRow, {"user_id": user_id, "character_id": character_id})
+            row = session.get(SessionRow, {'user_id': user_id, 'character_id': character_id})
             if row is None:
                 return None
             removed = _row_to_session(row)
@@ -288,7 +286,7 @@ class SQLAlchemyMetadataStore:
             return list(reversed([_row_to_turn(row) for row in rows]))
 
     def add_chat_turn(self, turn: ChatTurn) -> ChatTurn:
-        payload = turn.model_dump()
+        payload = turn.model_dump(mode='json')
         with self._session_factory() as session:
             row = ChatTurnRow(**payload)
             session.add(row)
@@ -300,15 +298,15 @@ class SQLAlchemyMetadataStore:
 def create_sqlalchemy_engine(database_url: str) -> Engine:
     connect_args: dict[str, object] = {}
     kwargs: dict[str, object] = {}
-    if database_url.startswith("sqlite"):
-        connect_args["check_same_thread"] = False
-        Path(".data").mkdir(exist_ok=True)
-    if database_url.endswith(":memory:"):
-        kwargs["poolclass"] = StaticPool
+    if database_url.startswith('sqlite'):
+        connect_args['check_same_thread'] = False
+        Path('.data').mkdir(exist_ok=True)
+    if database_url.endswith(':memory:'):
+        kwargs['poolclass'] = StaticPool
     return create_engine(database_url, connect_args=connect_args, **kwargs)
 
 
 def build_metadata_store(*, backend: str, database_url: str) -> MetadataStore:
-    if backend == "memory":
+    if backend == 'memory':
         return InMemoryMetadataStore()
     return SQLAlchemyMetadataStore(database_url=database_url)

@@ -9,41 +9,14 @@ import streamlit as st
 from memllm_dev_ui.client import ApiClient
 from memllm_dev_ui.settings import DevUiSettings
 
-STEP_METADATA = {
-    'session_resolution': {
-        'title': 'Session Resolution',
-        'description': (
-            'Resolve or create the Letta agent for this specific user and character pair.'
-        ),
-    },
-    'letta_memory_context': {
-        'title': 'Letta Memory Retrieval',
-        'description': (
-            'Fetch the memory Letta returns for this turn: shared character blocks, '
-            'user-specific blocks, and retrieved passages.'
-        ),
-    },
-    'message_history': {
-        'title': 'Message History Selection',
-        'description': (
-            'Select the recent conversation window that will be included in the final '
-            'reply request.'
-        ),
-    },
-    'reply_provider_resolution': {
-        'title': 'Reply Provider Resolution',
-        'description': (
-            'Choose the adapter and runtime settings for the user-facing reply provider.'
-        ),
-    },
-    'memory_persistence_schedule': {
-        'title': 'Memory Persistence Scheduling',
-        'description': (
-            'Queue the local memory extraction and Letta write-back that happen after '
-            'the user-facing reply is generated.'
-        ),
-    },
-}
+MEMORY_WORK_EVENT_ORDER = [
+    'session_resolution',
+    'memory_blocks_read',
+    'archival_memory_search',
+    'memory_extractor_call',
+    'memory_block_update',
+    'archival_memory_insert',
+]
 
 
 def _load_client() -> tuple[DevUiSettings, ApiClient]:
@@ -86,30 +59,50 @@ def _render_jsonish(value: Any, *, fallback_label: str = 'Value') -> None:
     st.code(str(value))
 
 
+def _render_memory_blocks(memory_blocks: list[dict[str, Any]], *, empty_text: str) -> None:
+    if not memory_blocks:
+        st.write(empty_text)
+        return
+    for block in memory_blocks:
+        label = block.get('label', 'unknown')
+        scope = block.get('scope', 'unknown')
+        st.markdown(f'**{label}**')
+        st.caption(f'Scope: {scope}')
+        if block.get('description'):
+            st.caption(block['description'])
+        st.code(block.get('value', ''))
+
+
+def _render_archival_memory(archival_memory: list[dict[str, Any]], *, empty_text: str) -> None:
+    if not archival_memory:
+        st.write(empty_text)
+        return
+    for item in archival_memory:
+        if item.get('score') is not None:
+            st.caption(f"score={item['score']}")
+        st.code(item.get('text', ''))
+
+
 def _render_memory(snapshot: dict[str, Any]) -> None:
     st.subheader('Memory Snapshot')
     if not snapshot:
-        st.info('Seed a character and send a message to inspect memory.')
+        st.info('Seed a character and send a message to inspect live Letta memory.')
         return
 
     st.caption(
-        'This is the current Letta-backed memory view for the selected user and '
-        'character: shared character memory plus user-specific memory and retrieved '
-        'passages. Use Letta Desktop or ADE for direct editing.'
+        'Live Letta state for this user-agent pair. Memory Blocks approximate the working '
+        'context; Archival Memory is the retrievable long-term store.'
     )
-    blocks = snapshot.get('blocks', [])
-    passages = snapshot.get('passages', [])
-    with st.expander('Blocks', expanded=True):
-        if not blocks:
-            st.write('No blocks available.')
-        for block in blocks:
-            st.markdown(f"**{block['label']}**")
-            st.code(block['value'])
-    with st.expander('Passages', expanded=True):
-        if not passages:
-            st.write('No passages available.')
-        for passage in passages:
-            st.code(passage['text'])
+    st.caption('MemGPT paper mapping: Working Context + Archival Memory.')
+    memory_blocks = snapshot.get('memory_blocks', [])
+    archival_memory = snapshot.get('archival_memory', [])
+    with st.expander('Memory Blocks', expanded=True):
+        _render_memory_blocks(memory_blocks, empty_text='No memory blocks available.')
+    with st.expander('Archival Memory', expanded=True):
+        _render_archival_memory(
+            archival_memory,
+            empty_text='No archival memory items available.',
+        )
 
 
 def _render_session_manager(
@@ -181,41 +174,114 @@ def _render_session_manager(
                 st.rerun()
 
 
-def _render_debug_panels(debug_turns: list[dict[str, Any]]) -> None:
-    latest = debug_turns[-1] if debug_turns else None
-    final_request = (latest or {}).get('debug', {}).get('final_request')
-    steps = (latest or {}).get('debug', {}).get('steps', [])
+def _render_prompt_pipeline(latest_debug: dict[str, Any]) -> None:
+    st.subheader('Prompt Pipeline')
+    st.caption(
+        'This shows how the app assembled the final request: System Instructions, Working '
+        'Context, Conversation Window, and retrieved Archival Memory.'
+    )
+    st.caption('MemGPT paper mapping: System Instructions + Working Context + FIFO Queue analogue.')
+    pipeline = latest_debug.get('prompt_pipeline') if latest_debug else None
+    if not pipeline:
+        st.info('Send a message to inspect the prompt assembly for the current round.')
+        return
 
+    with st.expander('System Instructions', expanded=True):
+        st.code(pipeline.get('system_instructions', ''))
+    with st.expander('Working Context', expanded=True):
+        working_context = pipeline.get('working_context', {})
+        st.caption('Shared memory blocks')
+        _render_memory_blocks(
+            working_context.get('shared_memory_blocks', []),
+            empty_text='No shared memory blocks in working context.',
+        )
+        st.caption('User memory blocks')
+        _render_memory_blocks(
+            working_context.get('user_memory_blocks', []),
+            empty_text='No user memory blocks in working context.',
+        )
+    with st.expander('Conversation Window', expanded=False):
+        conversation_window = pipeline.get('conversation_window', [])
+        if not conversation_window:
+            st.write('No conversation window available.')
+        for message in conversation_window:
+            st.markdown(f"**{message.get('role', 'unknown')}**")
+            st.code(message.get('content', ''))
+    with st.expander('Retrieved Archival Memory', expanded=False):
+        _render_archival_memory(
+            pipeline.get('retrieved_archival_memory', []),
+            empty_text='No archival memory was retrieved for this round.',
+        )
+    with st.expander('Final Provider Payload', expanded=False):
+        _render_jsonish(pipeline.get('final_provider_payload'))
+
+
+def _ordered_memory_work_events(trace_events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranking = {kind: index for index, kind in enumerate(MEMORY_WORK_EVENT_ORDER)}
+    return sorted(
+        [event for event in trace_events if event.get('kind') in ranking],
+        key=lambda item: ranking[item.get('kind', '')],
+    )
+
+
+def _render_trace_event(event: dict[str, Any], *, expanded: bool) -> None:
+    title = event.get('title', event.get('kind', 'Event'))
+    with st.expander(title, expanded=expanded):
+        if event.get('description'):
+            st.caption(event['description'])
+        if event.get('paper_mapping'):
+            st.caption(f"Paper mapping: {event['paper_mapping']}")
+        st.caption('Request')
+        _render_jsonish(event.get('request'))
+        st.caption('Response')
+        _render_jsonish(event.get('response'))
+
+
+def _render_current_round_memory_work(latest_debug: dict[str, Any]) -> None:
+    st.subheader('Current-Round Memory Work')
+    st.caption(
+        'This is the live trace for the current round: Letta reads/searches, the local '
+        'memory extractor call, and the Letta write operations.'
+    )
+    st.caption('MemGPT paper mapping: Working Context updates and Archival Memory writes.')
+    if not latest_debug:
+        st.info('Send a message to inspect the current round trace.')
+        return
+
+    trace_events = latest_debug.get('trace_events', [])
+    memory_events = _ordered_memory_work_events(trace_events)
+    if not memory_events:
+        st.info('No current-round memory work is available yet.')
+    else:
+        for index, event in enumerate(memory_events):
+            _render_trace_event(event, expanded=index == len(memory_events) - 1)
+
+    with st.expander('Writeback Summary', expanded=False):
+        memory_writeback = latest_debug.get('memory_writeback')
+        if not memory_writeback:
+            st.write('No inline writeback data is available for this round.')
+        else:
+            _render_jsonish(memory_writeback)
+
+    with st.expander('Full Current-Round Trace', expanded=False):
+        for event in trace_events:
+            _render_trace_event(event, expanded=False)
+
+
+def _render_final_provider_call(latest_debug: dict[str, Any]) -> None:
     st.subheader('Final Provider Call')
     st.caption(
-        'This is the exact last outbound request sent to the final reply provider for '
-        'this round, after memory retrieval and request assembly.'
+        'This is the exact last outbound request sent to the final reply provider after '
+        'prompt assembly.'
     )
-    if not final_request:
+    final_provider_call = latest_debug.get('final_provider_call') if latest_debug else None
+    if not final_provider_call:
         st.info('Send a message to inspect the final outbound provider request for this round.')
-    else:
-        _render_jsonish(final_request)
+        return
+    _render_jsonish(final_provider_call)
 
-    st.subheader('Middle Steps')
-    st.caption(
-        'These are the in-process orchestration steps for the current round. They show '
-        'how memory was loaded and how the final reply call was prepared.'
-    )
-    if not steps:
-        st.info('No middle-step trace is available for this round yet.')
-    else:
-        for index, step in enumerate(steps, start=1):
-            metadata = STEP_METADATA.get(step['label'], {})
-            title = metadata.get('title', step['label'].replace('_', ' ').title())
-            with st.expander(f'{index}. {title}', expanded=index == len(steps)):
-                description = metadata.get('description')
-                if description:
-                    st.caption(description)
-                st.caption('Input')
-                _render_jsonish(step.get('input'))
-                st.caption('Output')
-                _render_jsonish(step.get('output'))
 
+def _render_debug_history(debug_turns: list[dict[str, Any]]) -> None:
     with st.expander('Debug History', expanded=False):
         st.caption(
             'Browser-session-only snapshots of earlier rounds. This does not persist to '
@@ -228,9 +294,7 @@ def _render_debug_panels(debug_turns: list[dict[str, Any]]) -> None:
         selected = st.selectbox(
             'Round',
             options=options,
-            format_func=lambda idx: (
-                f"Round {idx + 1}: {debug_turns[idx]['user_message'][:48]}"
-            ),
+            format_func=lambda idx: f"Round {idx + 1}: {debug_turns[idx]['user_message'][:48]}",
         )
         chosen = debug_turns[selected]
         st.caption('Latest browser-session snapshot for that round')
@@ -243,18 +307,20 @@ def main() -> None:
 
     settings, client = _load_client()
     st.title('memLLM Phase 1 Dev UI')
-    st.caption(
-        'Chat here. Inspect and edit detailed memory in Letta Desktop or the ADE.'
-    )
+    st.caption('Chat here. Inspect and explain the Letta-backed memory flow round by round.')
     with st.expander('How to Read This Page', expanded=False):
-        st.markdown("""
-- `Chat`: the user-visible conversation.
-- `Character`: the repo-defined manifest and reply-provider configuration.
+        st.markdown(
+            """
+- `Chat`: the user-visible conversation only.
 - `User-Agent Pair`: the Letta agent that stores memory for one user talking to one character.
-- `Final Provider Call`: the exact last payload sent to DouBao or local Ollama.
-- `Middle Steps`: the temporary orchestration trace for this round only.
-- `Memory Snapshot`: the current Letta-backed memory state for this pair.
-""")
+- `Final Provider Call`: the exact last request that went to DouBao or local Ollama.
+- `Prompt Pipeline`: the assembled System Instructions, Working Context,
+  Conversation Window, and retrieved Archival Memory.
+- `Current-Round Memory Work`: the live trace for Letta reads/searches,
+  local memory extraction, and Letta writes.
+- `Memory Snapshot`: the current live Letta state for this pair.
+"""
+        )
 
     with st.sidebar:
         st.header('Workspace')
@@ -292,13 +358,13 @@ def main() -> None:
         character_id=selected_character['character_id'],
     )
 
-    left, right = st.columns([1.05, 1.25], gap='large')
+    left, right = st.columns([0.9, 1.45], gap='large')
 
     with left:
         st.subheader('Chat')
         st.caption(
-            'This is the user-facing conversation only. Memory retrieval and provider '
-            'calls are shown separately on the right.'
+            'This is only the user-facing conversation. Prompt assembly and memory work are '
+            'shown separately on the right.'
         )
         for message in conversation['messages']:
             with st.chat_message(message['role']):
@@ -330,23 +396,26 @@ def main() -> None:
                     {
                         'user_message': prompt,
                         'assistant_message': reply,
-                        'debug': response.get('debug'),
+                        'debug': response.get('debug') or {},
                     }
                 )
                 st.markdown(reply)
             st.rerun()
 
+    latest_debug = conversation['debug_turns'][-1]['debug'] if conversation['debug_turns'] else {}
+
     with right:
         st.subheader('Character')
         st.caption(
-            'This is the repo-defined character manifest, not live memory. It controls the '
-            'persona, provider, and memory defaults.'
+            'This is the repo-defined character manifest, not live memory. It controls '
+            'System Instructions, provider settings, seeded memory blocks, and archival seed text.'
         )
         st.json(
             {
                 'character_id': selected_character['character_id'],
                 'description': selected_character['description'],
                 'reply_provider': selected_character['reply_provider'],
+                'memory': selected_character['memory'],
             }
         )
         _render_session_manager(
@@ -355,7 +424,9 @@ def main() -> None:
             user_id=user_id,
             character=selected_character,
         )
-        _render_debug_panels(conversation['debug_turns'])
+        _render_final_provider_call(latest_debug)
+        _render_prompt_pipeline(latest_debug)
+        _render_current_round_memory_work(latest_debug)
         try:
             snapshot = client.get_memory(
                 user_id=user_id,
@@ -368,9 +439,10 @@ def main() -> None:
             st.error(f'Memory load failed: {exc}')
             snapshot = {}
         _render_memory(snapshot)
+        _render_debug_history(conversation['debug_turns'])
 
-        with st.expander('Raw Snapshot'):
-            st.caption('Low-level JSON view of the current memory snapshot.')
+        with st.expander('Raw Snapshot', expanded=False):
+            st.caption('Low-level JSON view of the current live memory snapshot.')
             st.code(json.dumps(snapshot, ensure_ascii=False, indent=2))
 
 

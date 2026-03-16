@@ -21,10 +21,12 @@ Update this file whenever phase 1 reveals work that should be picked up later.
 - whether a React frontend replaces the Streamlit development UI for phase 2
 - whether the Letta explicit-`llm_config` workaround should stay long term or be replaced once the
   Ollama model-registration path is clearer upstream
+- how to migrate from the current app-managed memory extractor to a Letta-native multi-agent path
 
 ## Lessons and Findings
 
 - Letta should be treated as the memory system of record, not the only UI surface
+- the repo now uses Letta-aligned manifest and debug terminology, while mapping MemGPT paper terms second
 - Letta Desktop is useful for memory management, but the project still needs its own chat UX
 - the custom simplified provider contract should stay behind a stable adapter boundary
 - the current WSL2-validated dev topology is containerized for Postgres/pgvector, Letta, Ollama,

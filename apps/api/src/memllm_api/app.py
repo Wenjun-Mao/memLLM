@@ -99,7 +99,13 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
     def chat(request: Request, payload: ChatRequest, background_tasks: BackgroundTasks) -> dict:
         container = request.app.state.container
         response, pending = container.orchestrator.prepare_chat(payload)
-        background_tasks.add_task(container.orchestrator.persist_turn, pending)
+        if container.settings.debug_inline_memory_writeback:
+            persisted = container.orchestrator.persist_turn(pending, capture_debug=True)
+            if response.debug is not None and persisted is not None:
+                response.debug.memory_writeback = persisted.memory_writeback
+                response.debug.trace_events.extend(persisted.trace_events)
+        else:
+            background_tasks.add_task(container.orchestrator.persist_turn, pending)
         return response.model_dump(mode="json")
 
     @app.get("/memory/{user_id}/{character_id}")

@@ -38,6 +38,13 @@ bash scripts/bootstrap_ubuntu.sh --mode api
 bash scripts/bootstrap_ubuntu.sh --mode full
 ```
 
+After the Letta-aligned schema rename in this phase, use a clean reset before reusing an older stack:
+
+```bash
+bash scripts/clean_dev_stack.sh --yes
+bash scripts/bootstrap_ubuntu.sh --mode full
+```
+
 ## Mode Differences
 
 ### `infra`
@@ -113,7 +120,7 @@ bash scripts/stop_dev_stack.sh
 bash scripts/clean_dev_stack.sh --yes
 ```
 
-`clean_dev_stack.sh` is the destructive reset path. It removes the stack containers and networks, wipes the Postgres volume so Letta memory and app metadata are rebuilt from scratch, and preserves the Ollama cache by default so pulled embedding/chat models and aliases do not need to be downloaded again. By default it also preserves `infra/ollama/models/Qwen3.5-9B-Q4_K_M.gguf`, `infra/letta/nltk_data/`, and `infra/env/.env`. Use `--include-ollama-cache` only when you want to wipe Ollama's cached models and aliases too.
+`clean_dev_stack.sh` is the destructive reset path. It removes the stack containers and networks, wipes the Postgres volume so Letta memory and app metadata are rebuilt from scratch, and preserves the Ollama cache by default so pulled embedding/chat models and aliases do not need to be downloaded again. By default it also preserves `infra/ollama/models/Qwen3.5-9B-Q4_K_M.gguf`, `infra/letta/nltk_data/`, and `infra/env/.env`. Use `--preserve-memory` when you want a container/network cleanup without losing Letta/app memory, and use `--include-ollama-cache` only when you want to wipe Ollama's cached models and aliases too.
 
 ## GPU Runtime Check
 

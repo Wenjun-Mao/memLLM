@@ -15,12 +15,16 @@ from memllm_domain import (
 
 
 def _format_memory_context(request: ReplyRequest) -> str:
-    block_lines = [f"{block.label}: {block.value}" for block in request.memory_context.blocks]
-    passage_lines = [f"- {passage.text}" for passage in request.memory_context.passages]
+    memory_block_lines = [
+        f"{block.label}: {block.value}" for block in request.memory_context.memory_blocks
+    ]
+    archival_lines = [f"- {item.text}" for item in request.memory_context.archival_memory]
     sections = [
-        f"Character: {request.character.display_name}",
-        'Memory blocks:\n' + ('\n'.join(block_lines) if block_lines else '- none'),
-        'Relevant passages:\n' + ('\n'.join(passage_lines) if passage_lines else '- none'),
+        f'Character: {request.character.display_name}',
+        'Working context memory blocks:\n'
+        + ('\n'.join(memory_block_lines) if memory_block_lines else '- none'),
+        'Retrieved archival memory:\n'
+        + ('\n'.join(archival_lines) if archival_lines else '- none'),
     ]
     return '\n\n'.join(sections)
 
@@ -29,13 +33,11 @@ def _format_user_content(request: ReplyRequest) -> str:
     history = '\n'.join(
         f"{message.role.title()}: {message.content}" for message in request.messages
     )
-    return f"{_format_memory_context(request)}\n\nConversation:\n{history}"
+    return f"{_format_memory_context(request)}\n\nConversation window:\n{history}"
 
 
 def _format_system_content(request: ReplyRequest) -> str:
-    prompt_parts = [request.character.persona]
-    if request.character.system_prompt:
-        prompt_parts.append(request.character.system_prompt)
+    prompt_parts = [request.character.system_instructions]
     prompt_parts.append('Stay consistent with the character and the provided memory context.')
     return '\n\n'.join(prompt_parts)
 
@@ -43,9 +45,7 @@ def _format_system_content(request: ReplyRequest) -> str:
 def _format_ollama_generate_prompt(request: ReplyRequest) -> str:
     prompt_parts = [f"<|im_start|>system\n{_format_system_content(request)}<|im_end|>"]
     for message in request.messages:
-        prompt_parts.append(
-            f"<|im_start|>{message.role}\n{message.content}<|im_end|>"
-        )
+        prompt_parts.append(f"<|im_start|>{message.role}\n{message.content}<|im_end|>")
     prompt_parts.append('<|im_start|>assistant\n')
     return '\n'.join(prompt_parts)
 

@@ -1,24 +1,16 @@
 # Chat Flow
 
-## Runtime Path
-
-1. Resolve the requested character from app metadata.
-2. Resolve or create the `(user_id, character_id)` Letta agent session.
-3. Pull relevant memory from Letta:
-   - current blocks such as `persona`, `style`, `human`
-   - top-k relevant passages for the current user message
-4. Build a normalized request for the configured reply provider.
-5. Generate the user-facing reply through the provider adapter.
-6. Return the reply immediately.
-7. In the background, run local memory extraction through Ollama and write the resulting delta back to Letta.
-8. Record the completed turn in the app metadata store.
-
-## Important Boundary
-
-Letta is the memory system. The reply provider is the user-facing generation system. This keeps
-provider switching possible without changing the memory model.
-
-## Development UI Boundary
-
-- The Streamlit app is for chatting, switching characters, and checking snapshots.
-- Letta Desktop or ADE is for direct memory inspection and editing.
+1. Resolve the character manifest and its `system_instructions`.
+2. Resolve or create the Letta agent for `(user_id, character_id)`.
+3. Read Letta memory blocks for the pair.
+4. Search Letta archival memory for top-k relevant items.
+5. Load the recent conversation window from app metadata.
+6. Assemble the final provider request from:
+   - `system_instructions`
+   - working-context memory blocks
+   - retrieved archival memory
+   - conversation window
+7. Send the final provider call.
+8. Run the local post-turn memory extractor.
+9. Write the resulting user-memory and archival-memory updates back to Letta.
+10. Persist the finished turn in app metadata.

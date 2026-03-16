@@ -5,35 +5,41 @@ from pathlib import Path
 from memllm_api.services import ChatOrchestrator
 from memllm_api.settings import ApiSettings
 from memllm_api.store import InMemoryMetadataStore
-from memllm_domain import CharacterRecord, ChatRequest, ProviderCallDebug, ProviderConfig
+from memllm_domain import (
+    CharacterRecord,
+    ChatRequest,
+    MemoryBlockSeed,
+    ProviderCallDebug,
+    ProviderConfig,
+)
 from memllm_letta_integration import InMemoryLettaGateway
 from memllm_memory_pipeline import MemoryExtractorRegistry
 from memllm_reply_providers import ReplyProviderRegistry
 
 
 class FakeReplyProvider:
-    kind = "ollama_chat"
+    kind = 'ollama_chat'
 
     def generate(self, config: ProviderConfig, request):  # type: ignore[override]
         del config
-        message = request.messages[-1].content
         from memllm_domain import ProviderResponse
 
+        message = request.messages[-1].content
         return ProviderResponse(
             provider_kind=self.kind,
-            content=f"echo::{message}",
+            content=f'echo::{message}',
             request_debug=ProviderCallDebug(
                 provider_kind=self.kind,
                 method='POST',
                 url='http://ollama:11434/api/generate',
                 payload={'message': message},
-                response={'response': f"echo::{message}"},
+                response={'response': f'echo::{message}'},
             ),
         )
 
 
 class CapturingReplyProvider:
-    kind = "ollama_chat"
+    kind = 'ollama_chat'
 
     def __init__(self) -> None:
         self.last_config: ProviderConfig | None = None
@@ -60,26 +66,30 @@ def _make_character(character_id: str) -> CharacterRecord:
     return CharacterRecord(
         character_id=character_id,
         display_name=character_id.title(),
-        description="test",
-        persona="test persona",
+        description='test',
+        system_instructions='test instructions',
         reply_provider=ProviderConfig(
-            kind="ollama_chat", base_url="http://localhost:11434", model="qwen3.5:9b"
+            kind='ollama_chat', base_url='http://localhost:11434', model='qwen3.5:9b'
         ),
-        manifest_path=f"{character_id}.yaml",
-        manifest_checksum="abc",
-        shared_block_ids={"persona": f"{character_id}-persona"},
+        shared_memory_blocks=[
+            MemoryBlockSeed(label='style', value='calm and direct')
+        ],
+        archival_memory_seed=['seed fact'],
+        manifest_path=f'{character_id}.yaml',
+        manifest_checksum='abc',
+        shared_block_ids={'style': f'{character_id}-style'},
     )
 
 
 def test_sessions_are_isolated_per_user_character_pair() -> None:
     settings = ApiSettings(
-        manifest_dir=Path("characters/manifests"),
-        database_backend="memory",
-        letta_mode="memory",
-        memory_extractor_kind="heuristic",
+        manifest_dir=Path('characters/manifests'),
+        database_backend='memory',
+        letta_mode='memory',
+        memory_extractor_kind='heuristic',
     )
     store = InMemoryMetadataStore()
-    for character_id in ("alpha", "beta"):
+    for character_id in ('alpha', 'beta'):
         store.upsert_character(_make_character(character_id))
 
     orchestrator = ChatOrchestrator(
@@ -91,13 +101,13 @@ def test_sessions_are_isolated_per_user_character_pair() -> None:
     )
 
     response_a, pending_a = orchestrator.prepare_chat(
-        ChatRequest(user_id="u1", character_id="alpha", message="hello")
+        ChatRequest(user_id='u1', character_id='alpha', message='hello')
     )
     response_b, pending_b = orchestrator.prepare_chat(
-        ChatRequest(user_id="u1", character_id="beta", message="hello")
+        ChatRequest(user_id='u1', character_id='beta', message='hello')
     )
     response_c, pending_c = orchestrator.prepare_chat(
-        ChatRequest(user_id="u2", character_id="alpha", message="hello")
+        ChatRequest(user_id='u2', character_id='alpha', message='hello')
     )
 
     assert response_a.agent_id != response_b.agent_id
@@ -107,29 +117,29 @@ def test_sessions_are_isolated_per_user_character_pair() -> None:
     orchestrator.persist_turn(pending_b)
     orchestrator.persist_turn(pending_c)
 
-    snapshot_a = orchestrator.get_memory_snapshot(user_id="u1", character_id="alpha")
-    snapshot_b = orchestrator.get_memory_snapshot(user_id="u1", character_id="beta")
-    snapshot_c = orchestrator.get_memory_snapshot(user_id="u2", character_id="alpha")
+    snapshot_a = orchestrator.get_memory_snapshot(user_id='u1', character_id='alpha')
+    snapshot_b = orchestrator.get_memory_snapshot(user_id='u1', character_id='beta')
+    snapshot_c = orchestrator.get_memory_snapshot(user_id='u2', character_id='alpha')
 
     assert snapshot_a.agent_id != snapshot_b.agent_id
     assert snapshot_a.agent_id != snapshot_c.agent_id
     assert any(
-        "Recent topic: hello" in block.value
-        for block in snapshot_a.blocks
-        if block.label == "human"
+        'Recent topic: hello' in block['value']
+        for block in [item.model_dump(mode='json') for item in snapshot_a.memory_blocks]
+        if block['label'] == 'human'
     )
 
 
 def test_localhost_ollama_base_url_is_overridden_by_runtime_setting() -> None:
     settings = ApiSettings(
-        manifest_dir=Path("characters/manifests"),
-        database_backend="memory",
-        letta_mode="memory",
-        memory_extractor_kind="heuristic",
-        reply_provider_ollama_base_url="http://ollama:11434",
+        manifest_dir=Path('characters/manifests'),
+        database_backend='memory',
+        letta_mode='memory',
+        memory_extractor_kind='heuristic',
+        reply_provider_ollama_base_url='http://ollama:11434',
     )
     store = InMemoryMetadataStore()
-    store.upsert_character(_make_character("alpha"))
+    store.upsert_character(_make_character('alpha'))
     provider = CapturingReplyProvider()
 
     orchestrator = ChatOrchestrator(
@@ -140,23 +150,21 @@ def test_localhost_ollama_base_url_is_overridden_by_runtime_setting() -> None:
         memory_extractors=MemoryExtractorRegistry(),
     )
 
-    orchestrator.prepare_chat(
-        ChatRequest(user_id="u1", character_id="alpha", message="hello")
-    )
+    orchestrator.prepare_chat(ChatRequest(user_id='u1', character_id='alpha', message='hello'))
 
     assert provider.last_config is not None
-    assert provider.last_config.base_url == "http://ollama:11434"
+    assert provider.last_config.base_url == 'http://ollama:11434'
 
 
-def test_prepare_chat_returns_debug_trace_and_session_management() -> None:
+def test_prepare_chat_returns_structured_debug_trace_and_inline_writeback() -> None:
     settings = ApiSettings(
-        manifest_dir=Path("characters/manifests"),
-        database_backend="memory",
-        letta_mode="memory",
-        memory_extractor_kind="heuristic",
+        manifest_dir=Path('characters/manifests'),
+        database_backend='memory',
+        letta_mode='memory',
+        memory_extractor_kind='heuristic',
     )
     store = InMemoryMetadataStore()
-    store.upsert_character(_make_character("alpha"))
+    store.upsert_character(_make_character('alpha'))
     orchestrator = ChatOrchestrator(
         settings=settings,
         store=store,
@@ -166,16 +174,23 @@ def test_prepare_chat_returns_debug_trace_and_session_management() -> None:
     )
 
     response, pending = orchestrator.prepare_chat(
-        ChatRequest(user_id="u1", character_id="alpha", message="hello trace")
+        ChatRequest(user_id='u1', character_id='alpha', message='hello trace')
     )
 
     assert response.debug is not None
-    assert response.debug.final_request is not None
-    assert response.debug.final_request.url == 'http://ollama:11434/api/generate'
-    assert any(step.label == 'session_resolution' for step in response.debug.steps)
-    assert any(step.label == 'letta_memory_context' for step in response.debug.steps)
+    assert response.debug.final_provider_call is not None
+    assert response.debug.final_provider_call.url == 'http://ollama:11434/api/generate'
+    assert response.debug.prompt_pipeline is not None
+    assert any(event.kind == 'session_resolution' for event in response.debug.trace_events)
+    assert any(event.kind == 'archival_memory_search' for event in response.debug.trace_events)
 
-    orchestrator.persist_turn(pending)
+    persisted = orchestrator.persist_turn(pending, capture_debug=True)
+    assert persisted is not None
+    assert persisted.memory_writeback.extractor_kind == 'heuristic'
+    assert any(event.kind == 'memory_extractor_call' for event in persisted.trace_events)
+    assert any(event.kind == 'memory_block_update' for event in persisted.trace_events)
+    assert any(event.kind == 'archival_memory_insert' for event in persisted.trace_events)
+
     sessions = orchestrator.list_sessions()
     assert len(sessions) == 1
     assert sessions[0].character_display_name == 'Alpha'

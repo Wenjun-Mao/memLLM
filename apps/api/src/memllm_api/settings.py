@@ -54,6 +54,8 @@ class ApiSettings(ApiBaseSettings):
     letta_embedding_endpoint: str = 'http://ollama:11434/v1'
     letta_embedding_dim: int = 1024
 
+    debug_inline_memory_writeback: bool = True
+
     memory_extractor_kind: Literal['heuristic', 'ollama_json'] = 'ollama_json'
     memory_extractor_base_url: str = 'http://localhost:11434'
     memory_extractor_model: str = 'memllm-qwen3.5-9b-q4km'
