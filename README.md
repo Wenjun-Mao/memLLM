@@ -40,7 +40,7 @@ The canonical phase-1 topology is:
 
 Bootstrap modes:
 
-- `infra`: prepare the Python workspace, download the GGUF if needed, start `postgres`, `ollama`, and `letta`, pull the embedding model, create the local Ollama alias, and preload the chat model. This is the right mode if you only want the core services ready.
+- `infra`: prepare the Python workspace, download the GGUF if needed, start `postgres`, `ollama`, and `letta`, pull the embedding model, create the local Ollama alias, and try to preload the chat model. If Ollama warm-up fails, the bootstrap now logs the failure and continues so the rest of the stack can still start. This is the right mode if you only want the core services ready.
 - `api`: do everything in `infra`, then start the FastAPI container on `http://localhost:8000`. Use this when you want the backend up but do not need the Streamlit UI.
 - `full`: do everything in `api`, then start the Streamlit dev UI on `http://localhost:8501`. Use this for the normal interactive development flow.
 
@@ -52,7 +52,7 @@ bash scripts/bootstrap_ubuntu.sh --mode api
 bash scripts/bootstrap_ubuntu.sh --mode full
 ```
 
-The Ubuntu host must already have Docker GPU support working. In particular, the NVIDIA runtime must be visible to Docker, `nvidia-persistenced` must be running before the Ollama container can start, and `curl` must be available for health checks. The bootstrap also preloads Letta's required NLTK `punkt_tab` data into `infra/letta/nltk_data/` and the project builds a small Letta wrapper image so cached NLTK data is used without relying on an online NLTK index during app startup.
+The Ubuntu host must already have Docker GPU support working. In particular, the NVIDIA runtime must be visible to Docker, `nvidia-persistenced` must be running before the Ollama container can start, and `curl` must be available for health checks. The bootstrap also preloads Letta's required NLTK `punkt_tab` data into `infra/letta/nltk_data/` and the project builds a small Letta wrapper image so cached NLTK data is used without relying on an online NLTK index during app startup. For Ollama, the bootstrap uses the documented empty-request `keep_alive` preload path, retries it a few times, and can be tuned with `OLLAMA_PRELOAD_ATTEMPTS` and `OLLAMA_PRELOAD_DELAY_SECONDS` in `infra/env/.env`.
 
 If Letta is slow to initialize on a given machine, increase `LETTA_READY_TIMEOUT_SECONDS` in `infra/env/.env`.
 

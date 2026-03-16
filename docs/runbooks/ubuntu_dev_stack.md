@@ -52,7 +52,7 @@ What it does:
   The Letta wait is configurable with `LETTA_READY_TIMEOUT_SECONDS` and can take several minutes on first boot, especially if the container is doing one-time startup work. The bootstrap now prints periodic progress lines while it waits.
 - pulls the Ollama embedding model `mxbai-embed-large` if needed
 - creates the project Ollama alias `memllm-qwen3.5-9b-q4km` if needed
-- preloads the local chat model and asks Ollama to keep it resident
+- attempts to preload the local chat model with Ollama's documented empty-request `keep_alive` path and asks Ollama to keep it resident
 
 What it does not do:
 
@@ -189,6 +189,10 @@ docker logs --tail 120 memllm-letta
 - The bootstrap and reply-provider paths keep the chat model resident with `keep_alive=-1`, so
   `docker exec memllm-ollama ollama ps` should show `UNTIL Forever` until the Ollama container is
   restarted or removed.
+- Bootstrap preloading uses Ollama's documented empty-request load call instead of generating a token.
+  If that warm-up still fails, the script retries it, prints recent Ollama logs, and continues so
+  `api` and `dev_ui` can still come up. Tune this with `OLLAMA_PRELOAD_ATTEMPTS` and
+  `OLLAMA_PRELOAD_DELAY_SECONDS` in `infra/env/.env`.
 - On smaller GPUs, expect higher first-response latency because Ollama may need to swap between the
   embedding model and the 9B chat model.
 

@@ -213,24 +213,62 @@ ensure_custom_ollama_alias() {
 
 preload_chat_model() {
   print_info "Preloading $OLLAMA_MODEL_ALIAS and asking Ollama to keep it resident."
-  OLLAMA_BASE_URL="$OLLAMA_BASE_URL" OLLAMA_MODEL="$OLLAMA_MODEL_ALIAS:latest" uv run python - <<'PY2'
+  OLLAMA_BASE_URL="$OLLAMA_BASE_URL" \
+  OLLAMA_MODEL="$OLLAMA_MODEL_ALIAS:latest" \
+  OLLAMA_PRELOAD_ATTEMPTS="$OLLAMA_PRELOAD_ATTEMPTS" \
+  OLLAMA_PRELOAD_DELAY_SECONDS="$OLLAMA_PRELOAD_DELAY_SECONDS" \
+  uv run python - <<'PY2'
 from __future__ import annotations
 
+import json
 import os
+import sys
+import time
 
 import httpx
 
+base_url = os.environ['OLLAMA_BASE_URL'].rstrip('/')
+model = os.environ['OLLAMA_MODEL']
+attempts = int(os.environ['OLLAMA_PRELOAD_ATTEMPTS'])
+delay_seconds = float(os.environ['OLLAMA_PRELOAD_DELAY_SECONDS'])
 payload = {
-    'model': os.environ['OLLAMA_MODEL'],
-    'prompt': '<|im_start|>system\nStay ready.<|im_end|>\n<|im_start|>assistant\n',
+    'model': model,
     'stream': False,
-    'raw': True,
     'keep_alive': -1,
-    'options': {'num_predict': 1},
 }
-with httpx.Client(timeout=120.0) as client:
-    response = client.post(f"{os.environ['OLLAMA_BASE_URL']}/api/generate", json=payload)
-    response.raise_for_status()
+
+last_error: Exception | None = None
+for attempt in range(1, attempts + 1):
+    try:
+        with httpx.Client(timeout=180.0) as client:
+            response = client.post(f'{base_url}/api/generate', json=payload)
+            response.raise_for_status()
+        body = response.json()
+        print(
+            json.dumps(
+                {
+                    'attempt': attempt,
+                    'load_duration': body.get('load_duration'),
+                    'done_reason': body.get('done_reason'),
+                },
+                ensure_ascii=False,
+            )
+        )
+        sys.exit(0)
+    except Exception as exc:  # noqa: BLE001
+        last_error = exc
+        print(
+            f'preload attempt {attempt}/{attempts} failed for {model}: {exc}',
+            file=sys.stderr,
+        )
+        if attempt < attempts:
+            time.sleep(delay_seconds)
+
+print(
+    f'failed to preload {model} after {attempts} attempts: {last_error}',
+    file=sys.stderr,
+)
+sys.exit(1)
 PY2
 }
 
@@ -242,7 +280,10 @@ start_infra() {
   wait_for_letta
   ensure_ollama_model "$OLLAMA_EMBED_MODEL"
   ensure_custom_ollama_alias
-  preload_chat_model
+  if ! preload_chat_model; then
+    print_error "Failed to preload $OLLAMA_MODEL_ALIAS after ${OLLAMA_PRELOAD_ATTEMPTS} attempts. Continuing without a pinned warm model; first local reply may be slow or fail until Ollama settles. Recent Ollama logs:"
+    docker logs --tail 120 "$OLLAMA_CONTAINER" >&2 || true
+  fi
 }
 
 start_api() {
