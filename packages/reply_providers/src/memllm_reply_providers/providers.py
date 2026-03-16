@@ -5,7 +5,13 @@ from typing import Protocol
 
 import httpx
 from loguru import logger
-from memllm_domain import ProviderConfig, ProviderError, ProviderResponse, ReplyRequest
+from memllm_domain import (
+    ProviderCallDebug,
+    ProviderConfig,
+    ProviderError,
+    ProviderResponse,
+    ReplyRequest,
+)
 
 
 def _format_memory_context(request: ReplyRequest) -> str:
@@ -51,6 +57,17 @@ def _cleanup_ollama_generate_response(content: str) -> str:
     for marker in ('<|im_end|>', '<|endoftext|>', '<|im_start|>assistant'):
         cleaned = cleaned.replace(marker, '')
     return cleaned.strip()
+
+
+def _sanitize_headers(headers: dict[str, str]) -> dict[str, str]:
+    sanitized: dict[str, str] = {}
+    for key, value in headers.items():
+        normalized = key.lower()
+        if any(token in normalized for token in ('authorization', 'api-key', 'token', 'secret')):
+            sanitized[key] = '[redacted]'
+        else:
+            sanitized[key] = value
+    return sanitized
 
 
 def _extract_content_from_simple_payload(payload: object) -> str | None:
@@ -123,6 +140,14 @@ class CustomSimpleHttpReplyProvider:
         user_content = _format_user_content(request)
         timeout = config.timeout_seconds
         params = {'system_content': system_content, 'user_content': user_content, **config.extra}
+        method = 'POST' if config.transport == 'post' else 'GET'
+        request_debug = ProviderCallDebug(
+            provider_kind=self.kind,
+            method=method,
+            url=config.endpoint,
+            headers=_sanitize_headers(config.headers),
+            payload=params,
+        )
 
         with httpx.Client(timeout=timeout, headers=config.headers) as client:
             if config.transport == 'post':
@@ -132,11 +157,17 @@ class CustomSimpleHttpReplyProvider:
             response.raise_for_status()
 
         content, payload = _parse_simple_payload(response)
+        request_debug = request_debug.model_copy(update={'response': payload})
         logger.debug(
             'custom_simple_http reply received for character={character_id}',
             character_id=request.character.character_id,
         )
-        return ProviderResponse(provider_kind=self.kind, content=content, raw_payload=payload)
+        return ProviderResponse(
+            provider_kind=self.kind,
+            content=content,
+            raw_payload=payload,
+            request_debug=request_debug,
+        )
 
 
 class OllamaChatReplyProvider:
@@ -166,7 +197,8 @@ class OllamaChatReplyProvider:
                     'stream': False,
                     **generation_options,
                 }
-                response = client.post(f'{base_url}/v1/chat/completions', json=payload)
+                url = f'{base_url}/v1/chat/completions'
+                response = client.post(url, json=payload)
                 response.raise_for_status()
                 body = response.json()
                 try:
@@ -185,7 +217,8 @@ class OllamaChatReplyProvider:
                 }
                 if generation_options:
                     payload['options'] = generation_options
-                response = client.post(f'{base_url}/api/generate', json=payload)
+                url = f'{base_url}/api/generate'
+                response = client.post(url, json=payload)
                 response.raise_for_status()
                 body = response.json()
                 try:
@@ -199,4 +232,16 @@ class OllamaChatReplyProvider:
             'ollama_chat reply received for character={character_id}',
             character_id=request.character.character_id,
         )
-        return ProviderResponse(provider_kind=self.kind, content=content, raw_payload=body)
+        return ProviderResponse(
+            provider_kind=self.kind,
+            content=content,
+            raw_payload=body,
+            request_debug=ProviderCallDebug(
+                provider_kind=self.kind,
+                method='POST',
+                url=url,
+                headers=_sanitize_headers(config.headers),
+                payload=payload,
+                response=body,
+            ),
+        )

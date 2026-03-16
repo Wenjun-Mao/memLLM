@@ -8,10 +8,12 @@ from loguru import logger
 from memllm_domain import (
     CharacterNotFoundError,
     CharacterRecord,
+    ChatDebugTrace,
     ChatMessage,
     ChatRequest,
     ChatResponse,
     ChatTurn,
+    DebugStep,
     MemoryContext,
     MemorySnapshot,
     ProviderConfig,
@@ -19,6 +21,7 @@ from memllm_domain import (
     SeedReport,
     SeedReportItem,
     SessionRecord,
+    SessionSummary,
 )
 from memllm_letta_integration import (
     LettaEmbeddingConfig,
@@ -77,6 +80,14 @@ class CharacterSeeder:
         return SeedReport(seeded=items)
 
 
+def _messages_debug_payload(messages: list[ChatMessage]) -> list[dict[str, str]]:
+    return [message.model_dump(mode='json') for message in messages]
+
+
+def _memory_context_debug_payload(context: MemoryContext) -> dict[str, object]:
+    return context.model_dump(mode='json')
+
+
 _AGENT_NAME_UNSAFE_RE = re.compile(r"[^\w\s\-']+", flags=re.UNICODE)
 
 
@@ -111,21 +122,81 @@ class ChatOrchestrator:
         if not character:
             raise CharacterNotFoundError(f'Unknown character: {request.character_id}')
 
-        session = self._get_or_create_session(request.user_id, character)
+        debug_steps: list[DebugStep] = []
+        session, created = self._get_or_create_session(request.user_id, character)
+        debug_steps.append(
+            DebugStep(
+                label='session_resolution',
+                input={
+                    'user_id': request.user_id,
+                    'character_id': character.character_id,
+                },
+                output={
+                    'agent_id': session.agent_id,
+                    'created': created,
+                    'agent_name': build_agent_name(
+                        character_id=character.character_id,
+                        user_id=request.user_id,
+                    ),
+                },
+            )
+        )
         memory_context = self._letta_gateway.get_memory_context(
             agent_id=session.agent_id,
             query=request.message,
             top_k=character.memory.archival_search_limit,
         )
+        debug_steps.append(
+            DebugStep(
+                label='letta_memory_context',
+                input={
+                    'agent_id': session.agent_id,
+                    'query': request.message,
+                    'top_k': character.memory.archival_search_limit,
+                },
+                output=_memory_context_debug_payload(memory_context),
+            )
+        )
         messages = self._build_message_history(request=request, character=character)
+        debug_steps.append(
+            DebugStep(
+                label='message_history',
+                input={
+                    'recent_message_window': character.memory.recent_message_window,
+                },
+                output={'messages': _messages_debug_payload(messages)},
+            )
+        )
+        provider_config = self._resolve_reply_provider_config(character.reply_provider)
+        debug_steps.append(
+            DebugStep(
+                label='reply_provider_resolution',
+                input=character.reply_provider.model_dump(mode='json'),
+                output=provider_config.model_dump(mode='json'),
+            )
+        )
         provider_response = self._reply_providers.generate(
-            config=self._resolve_reply_provider_config(character.reply_provider),
+            config=provider_config,
             request=ReplyRequest(
                 character=character,
                 user_id=request.user_id,
                 messages=messages,
                 memory_context=memory_context,
             ),
+        )
+        debug_steps.append(
+            DebugStep(
+                label='memory_persistence_schedule',
+                input={
+                    'extractor_kind': self._settings.memory_extractor_kind,
+                    'agent_id': session.agent_id,
+                },
+                output={
+                    'scheduled': True,
+                    'user_message': request.message,
+                    'assistant_message': provider_response.content,
+                },
+            )
         )
 
         response = ChatResponse(
@@ -134,6 +205,10 @@ class ChatOrchestrator:
             agent_id=session.agent_id,
             reply=provider_response.content,
             provider_kind=provider_response.provider_kind,
+            debug=ChatDebugTrace(
+                final_request=provider_response.request_debug,
+                steps=debug_steps,
+            ),
         )
         pending = PendingMemoryWrite(
             character=character,
@@ -181,10 +256,49 @@ class ChatOrchestrator:
             passage_limit=character.memory.snapshot_passage_limit,
         )
 
-    def _get_or_create_session(self, user_id: str, character: CharacterRecord) -> SessionRecord:
+    def list_sessions(self) -> list[SessionSummary]:
+        characters = {
+            character.character_id: character.display_name
+            for character in self._store.list_characters()
+        }
+        return [
+            SessionSummary(
+                user_id=session.user_id,
+                character_id=session.character_id,
+                character_display_name=characters.get(session.character_id, session.character_id),
+                agent_id=session.agent_id,
+                created_at=session.created_at,
+                updated_at=session.updated_at,
+            )
+            for session in self._store.list_sessions()
+        ]
+
+    def delete_session(self, *, user_id: str, character_id: str) -> SessionSummary | None:
+        session = self._store.get_session(user_id=user_id, character_id=character_id)
+        if session is None:
+            return None
+        character = self._store.get_character(character_id)
+        self._letta_gateway.delete_session_agent(agent_id=session.agent_id)
+        removed = self._store.delete_session(user_id=user_id, character_id=character_id)
+        if removed is None:
+            return None
+        return SessionSummary(
+            user_id=removed.user_id,
+            character_id=removed.character_id,
+            character_display_name=(
+                character.display_name if character else removed.character_id
+            ),
+            agent_id=removed.agent_id,
+            created_at=removed.created_at,
+            updated_at=removed.updated_at,
+        )
+
+    def _get_or_create_session(
+        self, user_id: str, character: CharacterRecord
+    ) -> tuple[SessionRecord, bool]:
         session = self._store.get_session(user_id=user_id, character_id=character.character_id)
         if session:
-            return session
+            return session, False
 
         agent_id = self._letta_gateway.create_session_agent(
             agent_name=build_agent_name(character_id=character.character_id, user_id=user_id),
@@ -195,13 +309,14 @@ class ChatOrchestrator:
             embedding_config=self._build_letta_embedding_config(),
             initial_human_block=character.memory.initial_human_block,
         )
-        return self._store.upsert_session(
+        created = self._store.upsert_session(
             SessionRecord(
                 user_id=user_id,
                 character_id=character.character_id,
                 agent_id=agent_id,
             )
         )
+        return created, True
 
     def _build_letta_llm_config(self) -> LettaLLMConfig | None:
         if not self._settings.letta_use_direct_model_config:

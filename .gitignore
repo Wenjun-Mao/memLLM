@@ -31,4 +31,4 @@ infra/letta/nltk_data/*
 !infra/letta/nltk_data/.gitkeep
 
 # temp debug files
-zz-remote*
+zz-*

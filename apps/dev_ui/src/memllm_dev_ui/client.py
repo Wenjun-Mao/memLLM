@@ -23,6 +23,16 @@ class ApiClient:
         response.raise_for_status()
         return response.json()
 
+    def list_sessions(self) -> list[dict]:
+        response = self._client.get("/sessions")
+        response.raise_for_status()
+        return response.json()
+
+    def delete_session(self, *, user_id: str, character_id: str) -> dict:
+        response = self._client.delete(f"/sessions/{user_id}/{character_id}")
+        response.raise_for_status()
+        return response.json()
+
     def send_chat(self, *, user_id: str, character_id: str, message: str) -> dict:
         payload = ChatRequest(user_id=user_id, character_id=character_id, message=message)
         response = self._client.post("/chat", json=payload.model_dump(mode="json"))

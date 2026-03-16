@@ -21,9 +21,13 @@ class MetadataStore(Protocol):
 
     def upsert_character(self, record: CharacterRecord) -> tuple[CharacterRecord, bool]: ...
 
+    def list_sessions(self) -> list[SessionRecord]: ...
+
     def get_session(self, user_id: str, character_id: str) -> SessionRecord | None: ...
 
     def upsert_session(self, record: SessionRecord) -> SessionRecord: ...
+
+    def delete_session(self, user_id: str, character_id: str) -> SessionRecord | None: ...
 
     def list_recent_chat_turns(
         self, user_id: str, character_id: str, limit: int
@@ -49,12 +53,30 @@ class InMemoryMetadataStore:
         self._characters[record.character_id] = record
         return record, created
 
+    def list_sessions(self) -> list[SessionRecord]:
+        return sorted(
+            self._sessions.values(),
+            key=lambda item: (item.updated_at, item.created_at),
+            reverse=True,
+        )
+
     def get_session(self, user_id: str, character_id: str) -> SessionRecord | None:
         return self._sessions.get((user_id, character_id))
 
     def upsert_session(self, record: SessionRecord) -> SessionRecord:
         self._sessions[(record.user_id, record.character_id)] = record
         return record
+
+    def delete_session(self, user_id: str, character_id: str) -> SessionRecord | None:
+        removed = self._sessions.pop((user_id, character_id), None)
+        if removed is None:
+            return None
+        self._turns = [
+            turn
+            for turn in self._turns
+            if not (turn.user_id == user_id and turn.character_id == character_id)
+        ]
+        return removed
 
     def list_recent_chat_turns(self, user_id: str, character_id: str, limit: int) -> list[ChatTurn]:
         turns = [
@@ -206,6 +228,16 @@ class SQLAlchemyMetadataStore:
             session.refresh(row)
             return _row_to_character(row), created
 
+    def list_sessions(self) -> list[SessionRecord]:
+        with self._session_factory() as session:
+            rows = session.scalars(
+                select(SessionRow).order_by(
+                    SessionRow.updated_at.desc(),
+                    SessionRow.created_at.desc(),
+                )
+            ).all()
+            return [_row_to_session(row) for row in rows]
+
     def get_session(self, user_id: str, character_id: str) -> SessionRecord | None:
         with self._session_factory() as session:
             row = session.get(SessionRow, {"user_id": user_id, "character_id": character_id})
@@ -226,6 +258,24 @@ class SQLAlchemyMetadataStore:
             session.commit()
             session.refresh(row)
             return _row_to_session(row)
+
+    def delete_session(self, user_id: str, character_id: str) -> SessionRecord | None:
+        with self._session_factory() as session:
+            row = session.get(SessionRow, {"user_id": user_id, "character_id": character_id})
+            if row is None:
+                return None
+            removed = _row_to_session(row)
+            turn_rows = session.scalars(
+                select(ChatTurnRow).where(
+                    ChatTurnRow.user_id == user_id,
+                    ChatTurnRow.character_id == character_id,
+                )
+            ).all()
+            for turn_row in turn_rows:
+                session.delete(turn_row)
+            session.delete(row)
+            session.commit()
+            return removed
 
     def list_recent_chat_turns(self, user_id: str, character_id: str, limit: int) -> list[ChatTurn]:
         with self._session_factory() as session:

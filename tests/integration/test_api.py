@@ -6,7 +6,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from memllm_api.app import create_app
 from memllm_api.settings import ApiSettings
-from memllm_domain import ProviderConfig
+from memllm_domain import ProviderCallDebug, ProviderConfig
 from memllm_reply_providers import ReplyProviderRegistry
 
 
@@ -18,7 +18,15 @@ class FakeReplyProvider:
         from memllm_domain import ProviderResponse
 
         return ProviderResponse(
-            provider_kind=self.kind, content=f"stub::{request.messages[-1].content}"
+            provider_kind=self.kind,
+            content=f"stub::{request.messages[-1].content}",
+            request_debug=ProviderCallDebug(
+                provider_kind=self.kind,
+                method='POST',
+                url='http://ollama:11434/api/generate',
+                payload={'model': 'fake', 'message': request.messages[-1].content},
+                response={'response': f"stub::{request.messages[-1].content}"},
+            ),
         )
 
 
@@ -50,13 +58,38 @@ def test_seed_chat_and_memory_flow() -> None:
             },
         )
         assert chat_response.status_code == 200
-        assert chat_response.json()["reply"] == "stub::remember tea"
+        chat_payload = chat_response.json()
+        assert chat_payload["reply"] == "stub::remember tea"
+        assert chat_payload["debug"]["final_request"]["url"] == 'http://ollama:11434/api/generate'
+        assert any(
+            step["label"] == 'letta_memory_context'
+            for step in chat_payload["debug"]["steps"]
+        )
+
+        sessions_response = client.get('/sessions')
+        assert sessions_response.status_code == 200
+        sessions_payload = sessions_response.json()
+        assert len(sessions_payload) == 1
+        assert sessions_payload[0]["user_id"] == 'dev-user'
+        assert sessions_payload[0]["character_id"] == first_character
 
         memory_response = client.get(f"/memory/dev-user/{first_character}")
         assert memory_response.status_code == 200
         snapshot = memory_response.json()
         assert snapshot["agent_id"] is not None
         assert any(block["label"] == "human" for block in snapshot["blocks"])
+
+        delete_response = client.delete(f'/sessions/dev-user/{first_character}')
+        assert delete_response.status_code == 200
+        assert delete_response.json()["character_id"] == first_character
+
+        sessions_after_delete = client.get('/sessions')
+        assert sessions_after_delete.status_code == 200
+        assert sessions_after_delete.json() == []
+
+        memory_after_delete = client.get(f"/memory/dev-user/{first_character}")
+        assert memory_after_delete.status_code == 200
+        assert memory_after_delete.json()["agent_id"] is None
 
 
 class _FakeJsonResponse:

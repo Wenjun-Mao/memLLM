@@ -79,6 +79,35 @@ class SessionRecord(DomainModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class SessionSummary(DomainModel):
+    user_id: str
+    character_id: str
+    character_display_name: str
+    agent_id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class DebugStep(DomainModel):
+    label: str
+    input: dict[str, Any] | list[Any] | str | None = None
+    output: dict[str, Any] | list[Any] | str | None = None
+
+
+class ProviderCallDebug(DomainModel):
+    provider_kind: str
+    method: str
+    url: str
+    headers: dict[str, str] = Field(default_factory=dict)
+    payload: dict[str, Any] | list[Any] | str | None = None
+    response: dict[str, Any] | list[Any] | str | None = None
+
+
+class ChatDebugTrace(DomainModel):
+    final_request: ProviderCallDebug | None = None
+    steps: list[DebugStep] = Field(default_factory=list)
+
+
 class ChatTurn(DomainModel):
     user_id: str
     character_id: str
@@ -129,6 +158,7 @@ class ProviderResponse(DomainModel):
     provider_kind: str
     content: str
     raw_payload: dict[str, Any] | list[Any] | str | None = None
+    request_debug: ProviderCallDebug | None = None
 
 
 class MemoryDelta(DomainModel):
@@ -148,6 +178,7 @@ class ChatResponse(DomainModel):
     agent_id: str
     reply: str
     provider_kind: str
+    debug: ChatDebugTrace | None = None
 
 
 class SeedReportItem(DomainModel):

@@ -51,6 +51,8 @@ class LettaGateway(Protocol):
 
     def apply_memory_delta(self, *, agent_id: str, delta: MemoryDelta) -> None: ...
 
+    def delete_session_agent(self, *, agent_id: str) -> None: ...
+
 
 def _iter_page_items(page: object) -> Iterable[object]:
     if page is None:
@@ -222,6 +224,12 @@ class RealLettaGateway:
         except Exception as exc:  # noqa: BLE001
             raise LettaGatewayError('Failed to apply memory delta to Letta.') from exc
 
+    def delete_session_agent(self, *, agent_id: str) -> None:
+        try:
+            self._client.agents.delete(agent_id=agent_id)
+        except Exception as exc:  # noqa: BLE001
+            raise LettaGatewayError(f'Failed to delete Letta agent: {agent_id}.') from exc
+
 
 @dataclass
 class _InMemoryAgent:
@@ -341,3 +349,7 @@ class InMemoryLettaGateway:
                     )
                 )
         logger.debug('Applied memory delta to in-memory agent {}', agent_id)
+
+    def delete_session_agent(self, *, agent_id: str) -> None:
+        self.agents.pop(agent_id, None)
+        logger.debug('Deleted in-memory agent {}', agent_id)

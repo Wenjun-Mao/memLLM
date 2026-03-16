@@ -17,6 +17,7 @@ integration notes, and deferred work in the repo so later phases do not depend o
 - [Phase 1 Scope](planning/phase_1_scope.md)
 - [Monorepo Structure](architecture/monorepo_structure.md)
 - [Chat Flow](architecture/chat_flow.md)
+- [Runtime Stack](architecture/runtime_stack.md)
 - [Memory Model](architecture/memory_model.md)
 - [Ubuntu Dev Stack](runbooks/ubuntu_dev_stack.md)
 - [Phase 2 Prep](planning/phase_2_prep.md)
@@ -32,6 +33,7 @@ integration notes, and deferred work in the repo so later phases do not depend o
 
 - [architecture/monorepo_structure.md](architecture/monorepo_structure.md)
 - [architecture/chat_flow.md](architecture/chat_flow.md)
+- [architecture/runtime_stack.md](architecture/runtime_stack.md)
 - [architecture/memory_model.md](architecture/memory_model.md)
 
 ## Integrations
@@ -54,4 +56,5 @@ integration notes, and deferred work in the repo so later phases do not depend o
 - [style_guide.md](style_guide.md)
 - [uv_monorepo_notes.md](uv_monorepo_notes.md)
 - [reference/style_guide.md](reference/style_guide.md)
+- [reference/character_manifest_guide.md](reference/character_manifest_guide.md)
 - [reference/uv_monorepo_notes.md](reference/uv_monorepo_notes.md)

@@ -110,4 +110,24 @@ def create_app(settings: ApiSettings | None = None) -> FastAPI:
         )
         return snapshot.model_dump(mode="json")
 
+    @app.get("/sessions")
+    def list_sessions(request: Request) -> list[dict]:
+        container = request.app.state.container
+        return [
+            session.model_dump(mode="json") for session in container.orchestrator.list_sessions()
+        ]
+
+    @app.delete("/sessions/{user_id}/{character_id}")
+    def delete_session(request: Request, user_id: str, character_id: str) -> JSONResponse:
+        container = request.app.state.container
+        deleted = container.orchestrator.delete_session(
+            user_id=user_id, character_id=character_id
+        )
+        if deleted is None:
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"Unknown session: {user_id}/{character_id}"},
+            )
+        return JSONResponse(status_code=200, content=deleted.model_dump(mode="json"))
+
     return app
