@@ -47,8 +47,9 @@ What it does:
 - syncs the `uv` workspace
 - downloads the Qwen GGUF into `infra/ollama/models/` if it is missing
 - starts the core Docker services: `postgres`, `ollama`, and `letta`
+- rebuilds the repo-managed Letta image when needed before startup
 - waits for those core services to become healthy
-  The Letta wait can take up to about 6 minutes on first boot, especially if the container is doing one-time startup work.
+  The Letta wait is configurable with `LETTA_READY_TIMEOUT_SECONDS` and can take several minutes on first boot, especially if the container is doing one-time startup work. The bootstrap now prints periodic progress lines while it waits.
 - pulls the Ollama embedding model `mxbai-embed-large` if needed
 - creates the project Ollama alias `memllm-qwen3.5-9b-q4km` if needed
 - preloads the local chat model and asks Ollama to keep it resident
@@ -70,6 +71,7 @@ What it does:
 
 - does everything in `infra`
 - starts the FastAPI container
+- rebuilds the API image when needed before startup
 - waits for `http://localhost:8000/health` to succeed
 
 What it does not do:
@@ -88,6 +90,7 @@ What it does:
 
 - does everything in `api`
 - starts the Streamlit dev UI container
+- rebuilds the dev UI image when needed before startup
 - waits for `http://localhost:8501` to respond
 
 Use it when:
@@ -161,7 +164,8 @@ docker exec -it memllm-ollama ollama create memllm-qwen3.5-9b-q4km -f /workspace
 
 - On a fresh machine, Letta can take noticeably longer than Postgres and Ollama to become API-ready on its first boot.
 - If this phase fails, the bootstrap exits before starting `api` and `dev_ui`, so seeing only the three infra containers is expected.
-- The current Letta image downloads NLTK `punkt_tab` during app startup. The bootstrap now pre-downloads that data on the host into `infra/letta/nltk_data/` and mounts it into the Letta container as `/root/nltk_data`.
+- The current Letta image calls `nltk.download("punkt_tab")` during app startup. The bootstrap now pre-downloads that data on the host into `infra/letta/nltk_data/`, validates that it is loadable, and mounts it into the Letta container as `/root/nltk_data`.
+- The project now builds a small Letta wrapper image that short-circuits `nltk.download("punkt_tab")` when the mounted data is already present, because NLTK may still hit the online index even for an installed package.
 - The bootstrap waits on `http://localhost:8283/v1/health/` instead of probing a heavier API route.
 - If Letta still times out, inspect the container directly:
 

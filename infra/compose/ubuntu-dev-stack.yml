@@ -27,7 +27,10 @@ services:
     gpus: all
 
   letta:
-    image: letta/letta:latest
+    build:
+      context: ../..
+      dockerfile: infra/docker/letta.Dockerfile
+    image: memllm-letta:dev
     container_name: memllm-letta
     restart: unless-stopped
     depends_on:

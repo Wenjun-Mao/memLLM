@@ -111,10 +111,27 @@ download_model_if_needed() {
   "${command[@]}"
 }
 
+letta_nltk_data_ready() {
+  NLTK_DOWNLOAD_DIR="$LETTA_NLTK_DATA_DIR" uv run --with nltk python - <<'PY2'
+from __future__ import annotations
+
+import os
+import sys
+
+import nltk
+
+nltk.data.path = [os.environ['NLTK_DOWNLOAD_DIR']]
+try:
+    nltk.data.find('tokenizers/punkt_tab')
+except LookupError:
+    sys.exit(1)
+sys.exit(0)
+PY2
+}
+
 ensure_letta_nltk_data() {
-  local marker="$LETTA_NLTK_DATA_DIR/tokenizers/punkt_tab/english/collocations.tab"
   mkdir -p "$LETTA_NLTK_DATA_DIR"
-  if [[ -f "$marker" ]]; then
+  if letta_nltk_data_ready; then
     print_info "Letta NLTK data already present at $LETTA_NLTK_DATA_DIR."
     return 0
   fi
@@ -129,6 +146,11 @@ import nltk
 
 nltk.download('punkt_tab', download_dir=os.environ['NLTK_DOWNLOAD_DIR'], quiet=True, raise_on_error=True)
 PY2
+
+  if ! letta_nltk_data_ready; then
+    print_error "Letta NLTK data is still not loadable from $LETTA_NLTK_DATA_DIR after download."
+    exit 1
+  fi
 }
 
 wait_for_postgres() {
@@ -148,12 +170,21 @@ wait_for_ollama() {
 }
 
 wait_for_letta() {
-  print_info "Waiting for Letta readiness at $LETTA_BASE_URL/v1/health/ (up to about 6 minutes on first boot)."
-  if wait_for_http "Letta" "$LETTA_BASE_URL/v1/health/" "200" 180 false; then
+  local attempts=$(( (LETTA_READY_TIMEOUT_SECONDS + 1) / 2 ))
+  local progress_every_attempts=$(( (LETTA_READY_PROGRESS_INTERVAL_SECONDS + 1) / 2 ))
+  if (( attempts < 1 )); then
+    attempts=1
+  fi
+  if (( progress_every_attempts < 1 )); then
+    progress_every_attempts=1
+  fi
+
+  print_info "Waiting for Letta readiness at $LETTA_BASE_URL/v1/health/ (timeout ${LETTA_READY_TIMEOUT_SECONDS}s, progress every ${LETTA_READY_PROGRESS_INTERVAL_SECONDS}s)."
+  if wait_for_http "Letta" "$LETTA_BASE_URL/v1/health/" "200" "$attempts" false "$progress_every_attempts"; then
     return 0
   fi
 
-  print_error "Letta did not become ready. The bootstrap stops in the infra phase here, so the API and dev UI were not started. If Letta becomes healthy later, rerun the bootstrap or start api/dev_ui with docker compose. Recent container logs:"
+  print_error "Letta did not become ready within ${LETTA_READY_TIMEOUT_SECONDS}s. The bootstrap stops in the infra phase here, so the API and dev UI were not started. If Letta becomes healthy later, rerun the bootstrap or start api/dev_ui with docker compose. Recent container logs:"
   docker logs --tail 120 "$LETTA_CONTAINER" >&2 || true
   exit 1
 }
@@ -204,7 +235,7 @@ PY2
 
 start_infra() {
   print_info "Starting Docker services for Postgres/pgvector, Ollama, and Letta."
-  compose_cmd up -d postgres ollama letta
+  compose_cmd up -d --build postgres ollama letta
   wait_for_postgres
   wait_for_ollama
   wait_for_letta
@@ -215,13 +246,13 @@ start_infra() {
 
 start_api() {
   print_info "Starting the API container."
-  compose_cmd up -d api
+  compose_cmd up -d --build api
   wait_for_http "memllm-api" "$MEMLLM_API_BASE_URL/health" "200" 60
 }
 
 start_dev_ui() {
   print_info "Starting the dev UI container."
-  compose_cmd up -d dev_ui
+  compose_cmd up -d --build dev_ui
   wait_for_http "memllm-dev-ui" "$MEMLLM_DEV_UI_BASE_URL" "200,302" 60
 }
 

@@ -53,6 +53,8 @@ load_env_file() {
   OLLAMA_PORT="${OLLAMA_PORT:-11434}"
   OLLAMA_MODEL_ALIAS="${OLLAMA_MODEL_ALIAS:-$DEFAULT_OLLAMA_MODEL_ALIAS}"
   OLLAMA_EMBED_MODEL="${OLLAMA_EMBED_MODEL:-$DEFAULT_OLLAMA_EMBED_MODEL}"
+  LETTA_READY_TIMEOUT_SECONDS="${LETTA_READY_TIMEOUT_SECONDS:-600}"
+  LETTA_READY_PROGRESS_INTERVAL_SECONDS="${LETTA_READY_PROGRESS_INTERVAL_SECONDS:-30}"
 
   MEMLLM_API_BASE_URL="${MEMLLM_API_BASE_URL:-http://127.0.0.1:${MEMLLM_API_PORT}}"
   MEMLLM_DEV_UI_BASE_URL="${MEMLLM_DEV_UI_BASE_URL:-http://127.0.0.1:${MEMLLM_DEV_UI_PORT}}"
@@ -106,11 +108,15 @@ wait_for_http() {
   local ok_codes="$3"
   local attempts="${4:-30}"
   local exit_on_failure="${5:-true}"
+  local progress_every_attempts="${6:-0}"
 
   for ((attempt = 1; attempt <= attempts; attempt += 1)); do
     if http_ok "$url" "$ok_codes"; then
       print_info "$description is responding at $url."
       return 0
+    fi
+    if (( progress_every_attempts > 0 && attempt % progress_every_attempts == 0 )); then
+      print_info "Still waiting for $description at $url ($((attempt * 2))s elapsed)."
     fi
     sleep 2
   done
