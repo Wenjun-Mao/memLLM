@@ -52,7 +52,7 @@ bash scripts/bootstrap_ubuntu.sh --mode api
 bash scripts/bootstrap_ubuntu.sh --mode full
 ```
 
-The Ubuntu host must already have Docker GPU support working. In particular, the NVIDIA runtime must be visible to Docker and `nvidia-persistenced` must be running before the Ollama container can start.
+The Ubuntu host must already have Docker GPU support working. In particular, the NVIDIA runtime must be visible to Docker and `nvidia-persistenced` must be running before the Ollama container can start. The bootstrap also preloads Letta's required NLTK `punkt_tab` data into `infra/letta/nltk_data/` so first boot does not depend on the container downloading it during app startup.
 
 Then inspect or stop it with:
 

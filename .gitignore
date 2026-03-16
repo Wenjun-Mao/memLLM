@@ -25,3 +25,10 @@ infra/env/.env
 # Local model artifacts
 infra/ollama/models/*
 !infra/ollama/models/.gitkeep
+
+# Local Letta runtime artifacts
+infra/letta/nltk_data/*
+!infra/letta/nltk_data/.gitkeep
+
+# temp debug files
+zz-remote*

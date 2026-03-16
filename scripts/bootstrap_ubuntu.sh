@@ -111,6 +111,26 @@ download_model_if_needed() {
   "${command[@]}"
 }
 
+ensure_letta_nltk_data() {
+  local marker="$LETTA_NLTK_DATA_DIR/tokenizers/punkt_tab/english/collocations.tab"
+  mkdir -p "$LETTA_NLTK_DATA_DIR"
+  if [[ -f "$marker" ]]; then
+    print_info "Letta NLTK data already present at $LETTA_NLTK_DATA_DIR."
+    return 0
+  fi
+
+  print_info "Downloading Letta NLTK data (punkt_tab) to $LETTA_NLTK_DATA_DIR."
+  NLTK_DOWNLOAD_DIR="$LETTA_NLTK_DATA_DIR" uv run --with nltk python - <<'PY2'
+from __future__ import annotations
+
+import os
+
+import nltk
+
+nltk.download('punkt_tab', download_dir=os.environ['NLTK_DOWNLOAD_DIR'], quiet=True, raise_on_error=True)
+PY2
+}
+
 wait_for_postgres() {
   wait_for_command \
     "Postgres" \
@@ -220,6 +240,7 @@ select_hf_cmd
 preflight_checks
 sync_workspace
 download_model_if_needed
+ensure_letta_nltk_data
 start_infra
 
 if [[ "$MODE" == "api" || "$MODE" == "full" ]]; then

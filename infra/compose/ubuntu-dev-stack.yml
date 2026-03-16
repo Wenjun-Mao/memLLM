@@ -36,10 +36,13 @@ services:
     environment:
       LETTA_PG_URI: postgresql://${POSTGRES_USER:-memllm}:${POSTGRES_PASSWORD:-memllm}@postgres:5432/${LETTA_DB_NAME:-letta}
       OLLAMA_BASE_URL: http://ollama:11434/v1
+      NLTK_DATA: /root/nltk_data
       SECURE: ${LETTA_SECURE:-false}
       LETTA_SERVER_PASSWORD: ${LETTA_SERVER_PASSWORD:-}
     ports:
       - "${LETTA_PORT:-8283}:8283"
+    volumes:
+      - ../letta/nltk_data:/root/nltk_data
 
   api:
     build:

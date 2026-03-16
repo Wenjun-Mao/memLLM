@@ -160,7 +160,8 @@ docker exec -it memllm-ollama ollama create memllm-qwen3.5-9b-q4km -f /workspace
 
 - On a fresh machine, Letta can take noticeably longer than Postgres and Ollama to become API-ready on its first boot.
 - If this phase fails, the bootstrap exits before starting `api` and `dev_ui`, so seeing only the three infra containers is expected.
-- The bootstrap now waits on `http://localhost:8283/v1/health` instead of probing a heavier API route.
+- The current Letta image downloads NLTK `punkt_tab` during app startup. The bootstrap now pre-downloads that data on the host into `infra/letta/nltk_data/` and mounts it into the Letta container as `/root/nltk_data`.
+- The bootstrap waits on `http://localhost:8283/v1/health` instead of probing a heavier API route.
 - If Letta still times out, inspect the container directly:
 
 ```bash
