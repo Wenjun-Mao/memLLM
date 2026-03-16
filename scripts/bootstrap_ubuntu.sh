@@ -126,7 +126,13 @@ wait_for_ollama() {
 }
 
 wait_for_letta() {
-  wait_for_http "Letta" "$LETTA_BASE_URL/v1/agents" "200,401,403" 30
+  if wait_for_http "Letta" "$LETTA_BASE_URL/v1/health" "200" 90 false; then
+    return 0
+  fi
+
+  print_error "Letta did not become ready. Recent container logs:"
+  docker logs --tail 120 "$LETTA_CONTAINER" >&2 || true
+  exit 1
 }
 
 ensure_ollama_model() {

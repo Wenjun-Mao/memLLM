@@ -104,6 +104,7 @@ wait_for_http() {
   local url="$2"
   local ok_codes="$3"
   local attempts="${4:-30}"
+  local exit_on_failure="${5:-true}"
 
   for ((attempt = 1; attempt <= attempts; attempt += 1)); do
     if http_ok "$url" "$ok_codes"; then
@@ -114,7 +115,10 @@ wait_for_http() {
   done
 
   print_error "$description did not become ready at $url."
-  exit 1
+  if [[ "$exit_on_failure" == "true" ]]; then
+    exit 1
+  fi
+  return 1
 }
 
 wait_for_command() {

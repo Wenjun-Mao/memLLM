@@ -155,6 +155,16 @@ docker exec -it memllm-ollama ollama pull mxbai-embed-large
 docker exec -it memllm-ollama ollama create memllm-qwen3.5-9b-q4km -f /workspace/ollama/Modelfile.qwen3.5-9b-q4km
 ```
 
+## Letta Startup Note
+
+- On a fresh machine, Letta can take noticeably longer than Postgres and Ollama to become API-ready on its first boot.
+- The bootstrap now waits on `http://localhost:8283/v1/health` instead of probing a heavier API route.
+- If Letta still times out, inspect the container directly:
+
+```bash
+docker logs --tail 120 memllm-letta
+```
+
 ## Letta and Ollama Notes
 
 - Letta v0.16.6 did not automatically register the imported GGUF alias as an Ollama LLM in this
