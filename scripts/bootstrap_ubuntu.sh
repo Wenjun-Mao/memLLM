@@ -132,6 +132,7 @@ PY2
 }
 
 wait_for_postgres() {
+  print_info "Waiting for Postgres readiness."
   wait_for_command \
     "Postgres" \
     30 \
@@ -139,6 +140,7 @@ wait_for_postgres() {
 }
 
 wait_for_ollama() {
+  print_info "Waiting for Ollama readiness."
   wait_for_command \
     "Ollama" \
     30 \
@@ -146,11 +148,12 @@ wait_for_ollama() {
 }
 
 wait_for_letta() {
-  if wait_for_http "Letta" "$LETTA_BASE_URL/v1/health" "200" 90 false; then
+  print_info "Waiting for Letta readiness at $LETTA_BASE_URL/v1/health/ (up to about 6 minutes on first boot)."
+  if wait_for_http "Letta" "$LETTA_BASE_URL/v1/health/" "200" 180 false; then
     return 0
   fi
 
-  print_error "Letta did not become ready. The bootstrap stops in the infra phase here, so the API and dev UI were not started. Recent container logs:"
+  print_error "Letta did not become ready. The bootstrap stops in the infra phase here, so the API and dev UI were not started. If Letta becomes healthy later, rerun the bootstrap or start api/dev_ui with docker compose. Recent container logs:"
   docker logs --tail 120 "$LETTA_CONTAINER" >&2 || true
   exit 1
 }

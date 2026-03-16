@@ -48,6 +48,7 @@ What it does:
 - downloads the Qwen GGUF into `infra/ollama/models/` if it is missing
 - starts the core Docker services: `postgres`, `ollama`, and `letta`
 - waits for those core services to become healthy
+  The Letta wait can take up to about 6 minutes on first boot, especially if the container is doing one-time startup work.
 - pulls the Ollama embedding model `mxbai-embed-large` if needed
 - creates the project Ollama alias `memllm-qwen3.5-9b-q4km` if needed
 - preloads the local chat model and asks Ollama to keep it resident
@@ -161,7 +162,7 @@ docker exec -it memllm-ollama ollama create memllm-qwen3.5-9b-q4km -f /workspace
 - On a fresh machine, Letta can take noticeably longer than Postgres and Ollama to become API-ready on its first boot.
 - If this phase fails, the bootstrap exits before starting `api` and `dev_ui`, so seeing only the three infra containers is expected.
 - The current Letta image downloads NLTK `punkt_tab` during app startup. The bootstrap now pre-downloads that data on the host into `infra/letta/nltk_data/` and mounts it into the Letta container as `/root/nltk_data`.
-- The bootstrap waits on `http://localhost:8283/v1/health` instead of probing a heavier API route.
+- The bootstrap waits on `http://localhost:8283/v1/health/` instead of probing a heavier API route.
 - If Letta still times out, inspect the container directly:
 
 ```bash

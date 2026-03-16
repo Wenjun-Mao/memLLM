@@ -51,6 +51,6 @@ fi
 
 echo
 echo "HTTP endpoints"
-report_endpoint "Letta" "$LETTA_BASE_URL/v1/agents" "200,401,403"
+report_endpoint "Letta" "$LETTA_BASE_URL/v1/health/" "200"
 report_endpoint "memllm-api" "$MEMLLM_API_BASE_URL/health" "200"
 report_endpoint "memllm-dev-ui" "$MEMLLM_DEV_UI_BASE_URL" "200,302"
