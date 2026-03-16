@@ -25,7 +25,7 @@ The Ubuntu host is responsible for:
 - running the repo bootstrap script
 - providing Docker, Compose, NVIDIA runtime support, Git, and `uv`
 
-All phase-1 services now run inside the Docker stack.
+All phase-1 services run inside the Docker stack.
 
 The canonical startup path is:
 
@@ -35,13 +35,68 @@ bash scripts/bootstrap_ubuntu.sh --mode api
 bash scripts/bootstrap_ubuntu.sh --mode full
 ```
 
-Modes:
+## Mode Differences
 
-- `infra`: sync the workspace, ensure the GGUF is present, start Docker services, wait for
-  Postgres/Ollama/Letta, pull `mxbai-embed-large`, and create the
-  `memllm-qwen3.5-9b-q4km` alias if needed
-- `api`: do everything in `infra`, then build/start the FastAPI container and seed characters
-- `full`: do everything in `api`, then build/start the Streamlit container
+### `infra`
+
+What it does:
+
+- runs preflight checks for Docker, `uv`, Git, and NVIDIA support
+- syncs the `uv` workspace
+- downloads the Qwen GGUF into `infra/ollama/models/` if it is missing
+- starts the core Docker services: `postgres`, `ollama`, and `letta`
+- waits for those core services to become healthy
+- pulls the Ollama embedding model `mxbai-embed-large` if needed
+- creates the project Ollama alias `memllm-qwen3.5-9b-q4km` if needed
+- preloads the local chat model and asks Ollama to keep it resident
+
+What it does not do:
+
+- does not start the FastAPI container
+- does not start the Streamlit dev UI container
+
+Use it when:
+
+- you want the Letta/Ollama/Postgres layer ready first
+- you want to debug the core infra separately from the app layer
+- you want Letta Desktop or ADE available without bringing up the app UI
+
+### `api`
+
+What it does:
+
+- does everything in `infra`
+- starts the FastAPI container
+- waits for `http://localhost:8000/health` to succeed
+
+What it does not do:
+
+- does not start the Streamlit dev UI container
+
+Use it when:
+
+- you want to test the HTTP API directly
+- you want to use `curl`, Swagger, or scripts without the UI
+- you want the backend running but do not need the browser chat surface
+
+### `full`
+
+What it does:
+
+- does everything in `api`
+- starts the Streamlit dev UI container
+- waits for `http://localhost:8501` to respond
+
+Use it when:
+
+- you want the normal phase-1 development experience
+- you want both the backend API and the browser chat UI available
+
+### Practical Rule
+
+- `infra`: core services only
+- `api`: core services plus backend
+- `full`: core services plus backend plus UI
 
 Use the helper scripts during development:
 

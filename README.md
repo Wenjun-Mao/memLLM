@@ -8,7 +8,7 @@ Phase 1 includes:
 - a Streamlit development UI
 - shared packages for domain models, Letta integration, memory ingestion, and reply providers
 - versioned character manifests
-- a Docker-based Ubuntu stack for Postgres/pgvector, Ollama, and Letta
+- a Docker-based Ubuntu stack for Postgres/pgvector, Ollama, Letta, the API, and the dev UI
 - Ubuntu bootstrap/status scripts for the development environment
 - structured docs for architecture, operations, and follow-on phases
 
@@ -35,7 +35,14 @@ The canonical phase-1 topology is:
 - `postgres`/`pgvector` in Docker
 - `ollama` in Docker
 - `letta` in Docker
-- FastAPI and Streamlit on the Ubuntu host when needed for development
+- `api` in Docker
+- `dev_ui` in Docker
+
+Bootstrap modes:
+
+- `infra`: prepare the Python workspace, download the GGUF if needed, start `postgres`, `ollama`, and `letta`, pull the embedding model, create the local Ollama alias, and preload the chat model. This is the right mode if you only want the core services ready.
+- `api`: do everything in `infra`, then start the FastAPI container on `http://localhost:8000`. Use this when you want the backend up but do not need the Streamlit UI.
+- `full`: do everything in `api`, then start the Streamlit dev UI on `http://localhost:8501`. Use this for the normal interactive development flow.
 
 Bootstrap it with:
 
