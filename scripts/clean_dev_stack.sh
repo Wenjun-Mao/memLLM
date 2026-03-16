@@ -7,33 +7,39 @@ source "$SCRIPT_DIR/_dev_stack_common.sh"
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/clean_dev_stack.sh --yes [--include-gguf]
+Usage: bash scripts/clean_dev_stack.sh --yes [--include-ollama-cache] [--include-gguf]
 
 Destructive cleanup for the phase-1 Docker dev stack.
 
 What it removes by default:
-- Docker containers, networks, and named volumes for the memLLM stack
+- Docker containers and networks for the memLLM stack
 - Persisted Postgres data, including Letta memory and app metadata
-- Persisted Ollama model cache and aliases stored in the Docker volume
 - The local .runtime/ directory if present
 
 What it keeps by default:
+- Ollama's Docker volume, including pulled embedding/chat models and aliases
 - infra/ollama/models/Qwen3.5-9B-Q4_K_M.gguf
 - infra/letta/nltk_data/
 - infra/env/.env
 
 Options:
-  --yes           Required confirmation flag.
-  --include-gguf  Also remove the downloaded GGUF from infra/ollama/models/.
+  --yes                   Required confirmation flag.
+  --include-ollama-cache  Also remove Ollama's Docker volume, which forces model re-downloads.
+  --include-gguf          Also remove the downloaded GGUF from infra/ollama/models/.
 EOF
 }
 
 CONFIRMED=false
+REMOVE_OLLAMA_CACHE=false
 REMOVE_GGUF=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --yes)
       CONFIRMED=true
+      shift
+      ;;
+    --include-ollama-cache)
+      REMOVE_OLLAMA_CACHE=true
       shift
       ;;
     --include-gguf)
@@ -61,8 +67,20 @@ fi
 load_env_file
 validate_env_constraints
 
-print_info "Stopping and removing Docker services, networks, and named volumes."
-compose_cmd down --volumes --remove-orphans
+print_info "Stopping and removing Docker services and networks."
+compose_cmd down --remove-orphans
+
+# Postgres stores Letta memory and app metadata, so wiping this volume is the real reset path.
+if docker volume inspect "$POSTGRES_VOLUME" >/dev/null 2>&1; then
+  print_info "Removing Docker volume $POSTGRES_VOLUME"
+  docker volume rm "$POSTGRES_VOLUME" >/dev/null
+fi
+
+# Keep Ollama's volume by default so pulled embedding models and local aliases survive resets.
+if [[ "$REMOVE_OLLAMA_CACHE" == "true" ]] && docker volume inspect "$OLLAMA_VOLUME" >/dev/null 2>&1; then
+  print_info "Removing Docker volume $OLLAMA_VOLUME"
+  docker volume rm "$OLLAMA_VOLUME" >/dev/null
+fi
 
 if [[ -d "$ROOT_DIR/.runtime" ]]; then
   print_info "Removing $ROOT_DIR/.runtime"
@@ -75,6 +93,11 @@ if [[ "$REMOVE_GGUF" == "true" && -f "$MODEL_PATH" ]]; then
 fi
 
 print_info "Cleanup complete. Preserved assets:"
+if docker volume inspect "$OLLAMA_VOLUME" >/dev/null 2>&1; then
+  printf -- "- Ollama cache volume: %s\n" "$OLLAMA_VOLUME"
+else
+  printf -- "- Ollama cache volume: not present\n"
+fi
 if [[ -f "$MODEL_PATH" ]]; then
   printf -- "- GGUF: %s\n" "$MODEL_PATH"
 else

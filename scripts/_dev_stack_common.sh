@@ -17,6 +17,10 @@ OLLAMA_CONTAINER="memllm-ollama"
 LETTA_CONTAINER="memllm-letta"
 API_CONTAINER="memllm-api"
 DEV_UI_CONTAINER="memllm-dev-ui"
+# Keep this in sync with the top-level `name:` field in infra/compose/ubuntu-dev-stack.yml.
+COMPOSE_PROJECT_NAME="memllm-dev"
+POSTGRES_VOLUME="${COMPOSE_PROJECT_NAME}_postgres_data"
+OLLAMA_VOLUME="${COMPOSE_PROJECT_NAME}_ollama_data"
 
 MEMLLM_API_PORT="${MEMLLM_API_PORT:-8000}"
 MEMLLM_DEV_UI_PORT="${MEMLLM_DEV_UI_PORT:-8501}"

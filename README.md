@@ -64,6 +64,10 @@ bash scripts/stop_dev_stack.sh
 bash scripts/clean_dev_stack.sh --yes
 ```
 
+`clean_dev_stack.sh --yes` now preserves the Ollama model cache by default, so the
+embedding model and local chat alias do not need to be re-downloaded after a normal reset. Use
+`--include-ollama-cache` only when you intentionally want a full Ollama wipe.
+
 See [docs/index.md](docs/index.md) for the living documentation, especially
 [docs/planning/current_status.md](docs/planning/current_status.md) for the current checklist and
 verification state.

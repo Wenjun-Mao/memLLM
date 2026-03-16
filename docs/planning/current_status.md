@@ -18,9 +18,10 @@ This file tracks what is actually built, what has been verified, and what still 
 - [x] The phase-1 Letta embedding default is now `qwen3-embedding:0.6b`, which preserves the current
   `1024`-dimension Letta config while improving Chinese/multilingual alignment over the earlier
   `mxbai-embed-large` default.
-- [x] `bash scripts/clean_dev_stack.sh --yes` removes the Docker stack, named volumes, Letta memory,
-  app metadata, and cached Ollama models/aliases while preserving the downloaded GGUF, Letta NLTK
-  data, and `infra/env/.env`.
+- [x] `bash scripts/clean_dev_stack.sh --yes` removes the Docker stack and Postgres-backed Letta/app
+  data while preserving the Ollama cache by default, so pulled embedding/chat models and aliases are
+  reused across normal rebuilds. The downloaded GGUF, Letta NLTK data, and `infra/env/.env` are also
+  preserved unless explicitly removed.
 - [x] On a fresh Ubuntu 24.04 WSL2 clone, `bash scripts/bootstrap_ubuntu.sh --mode infra` brought
   up Docker-hosted Postgres/pgvector, Ollama, and Letta, downloaded the GGUF, and created the
   `memllm-qwen3.5-9b-q4km` alias.
