@@ -130,7 +130,7 @@ wait_for_letta() {
     return 0
   fi
 
-  print_error "Letta did not become ready. Recent container logs:"
+  print_error "Letta did not become ready. The bootstrap stops in the infra phase here, so the API and dev UI were not started. Recent container logs:"
   docker logs --tail 120 "$LETTA_CONTAINER" >&2 || true
   exit 1
 }

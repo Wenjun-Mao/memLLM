@@ -13,6 +13,7 @@ Run the phase-1 development stack on the Ubuntu development machine:
 ## Files
 
 - Compose file: [../../infra/compose/ubuntu-dev-stack.yml](../../infra/compose/ubuntu-dev-stack.yml)
+  This file now sets the Compose project name to `memllm-dev`, so Docker networks and volumes are easier to recognize.
 - Example env: [../../infra/env/ubuntu-dev.example.env](../../infra/env/ubuntu-dev.example.env)
 - Bootstrap script: [../../scripts/bootstrap_ubuntu.sh](../../scripts/bootstrap_ubuntu.sh)
 - Status script: [../../scripts/status_dev_stack.sh](../../scripts/status_dev_stack.sh)
@@ -158,6 +159,7 @@ docker exec -it memllm-ollama ollama create memllm-qwen3.5-9b-q4km -f /workspace
 ## Letta Startup Note
 
 - On a fresh machine, Letta can take noticeably longer than Postgres and Ollama to become API-ready on its first boot.
+- If this phase fails, the bootstrap exits before starting `api` and `dev_ui`, so seeing only the three infra containers is expected.
 - The bootstrap now waits on `http://localhost:8283/v1/health` instead of probing a heavier API route.
 - If Letta still times out, inspect the container directly:
 
