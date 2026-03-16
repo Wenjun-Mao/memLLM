@@ -24,6 +24,7 @@ The Ubuntu host is responsible for:
 
 - running the repo bootstrap script
 - providing Docker, Compose, NVIDIA runtime support, Git, and `uv`
+- providing a working `nvidia-persistenced` service so GPU containers can start cleanly
 
 All phase-1 services run inside the Docker stack.
 
@@ -104,6 +105,28 @@ Use the helper scripts during development:
 bash scripts/status_dev_stack.sh
 bash scripts/stop_dev_stack.sh
 ```
+
+## GPU Runtime Check
+
+Before the bootstrap script can start Ollama with `gpus: all`, the host must satisfy two GPU-container prerequisites:
+
+- Docker must report an NVIDIA runtime.
+- The host must expose `/run/nvidia-persistenced/socket`.
+
+If the bootstrap script fails with an error mentioning `nvidia-persistenced/socket`, fix the host first:
+
+```bash
+sudo systemctl enable --now nvidia-persistenced
+sudo systemctl restart docker
+```
+
+Then validate Docker GPU access directly:
+
+```bash
+docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi
+```
+
+If `nvidia-persistenced` is not installed on the host yet, install the NVIDIA driver component that provides it, then rerun the two commands above.
 
 ## Model Download
 

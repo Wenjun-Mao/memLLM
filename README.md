@@ -52,6 +52,8 @@ bash scripts/bootstrap_ubuntu.sh --mode api
 bash scripts/bootstrap_ubuntu.sh --mode full
 ```
 
+The Ubuntu host must already have Docker GPU support working. In particular, the NVIDIA runtime must be visible to Docker and `nvidia-persistenced` must be running before the Ollama container can start.
+
 Then inspect or stop it with:
 
 ```bash

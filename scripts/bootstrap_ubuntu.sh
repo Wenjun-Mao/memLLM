@@ -64,6 +64,28 @@ preflight_checks() {
   require_command nvidia-smi
   docker compose version >/dev/null
   docker info >/dev/null
+  validate_nvidia_runtime
+}
+
+validate_nvidia_runtime() {
+  if ! docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"nvidia"'; then
+    print_error "Docker does not report an NVIDIA runtime. Install/configure the NVIDIA Container Toolkit first."
+    print_error "Expected validation command: docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi"
+    exit 1
+  fi
+
+  if [[ ! -S /run/nvidia-persistenced/socket ]]; then
+    print_error "Missing NVIDIA persistence daemon socket: /run/nvidia-persistenced/socket"
+    if command -v systemctl >/dev/null 2>&1; then
+      if systemctl list-unit-files | grep -q '^nvidia-persistenced\.service'; then
+        print_error "Start it with: sudo systemctl enable --now nvidia-persistenced"
+      else
+        print_error "Install the NVIDIA driver component that provides nvidia-persistenced, then enable the service."
+      fi
+    fi
+    print_error "After that, verify GPU containers with: docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi"
+    exit 1
+  fi
 }
 
 sync_workspace() {
