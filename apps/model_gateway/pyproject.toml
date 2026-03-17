@@ -1,0 +1,21 @@
+[project]
+name = "memllm-model-gateway"
+version = "0.1.0"
+description = "OpenAI-compatible model gateway for Letta-native memLLM"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastapi>=0.115.12",
+    "httpx>=0.28.1",
+    "loguru>=0.7.3",
+    "pydantic-settings>=2.8.1",
+    "pyyaml>=6.0.2",
+    "uvicorn>=0.34.0",
+]
+
+[project.scripts]
+memllm-model-gateway = "memllm_model_gateway.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.10.9,<0.11.0"]
+build-backend = "uv_build"
