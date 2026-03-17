@@ -1,7 +1,7 @@
 [project]
 name = "memllm-api"
 version = "0.1.0"
-description = "FastAPI orchestration app for memLLM"
+description = "FastAPI API for the Letta-native memLLM runtime"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -10,12 +10,8 @@ dependencies = [
     "loguru>=0.7.3",
     "memllm-domain",
     "memllm-letta-integration",
-    "memllm-memory-pipeline",
-    "memllm-reply-providers",
-    "psycopg[binary]>=3.2.6",
     "pydantic-settings>=2.8.1",
     "pyyaml>=6.0.2",
-    "sqlalchemy>=2.0.39",
     "uvicorn>=0.34.0",
 ]
 
@@ -25,8 +21,6 @@ memllm-api = "memllm_api.cli:main"
 [tool.uv.sources]
 memllm-domain = { workspace = true }
 memllm-letta-integration = { workspace = true }
-memllm-memory-pipeline = { workspace = true }
-memllm-reply-providers = { workspace = true }
 
 [build-system]
 requires = ["uv_build>=0.10.9,<0.11.0"]

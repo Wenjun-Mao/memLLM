@@ -1,7 +1,7 @@
 [project]
 name = "memllm-workspace"
-version = "0.1.0"
-description = "Phase 1 monorepo for a Letta-backed character chatbot"
+version = "0.2.0"
+description = "Letta-native monorepo for a multi-character memory chatbot"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = []
@@ -18,6 +18,7 @@ members = [
 [tool.uv.sources]
 memllm-api = { workspace = true }
 memllm-dev-ui = { workspace = true }
+memllm-model-gateway = { workspace = true }
 
 [dependency-groups]
 dev = [

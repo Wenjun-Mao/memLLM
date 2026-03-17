@@ -1,31 +1,38 @@
 # Monorepo Structure
 
-## Layout
+## Active Runtime Pieces
 
 ```text
 apps/
-  api/          FastAPI orchestration service
-  dev_ui/       Streamlit development chat UI
+  api/             Thin product/API layer over Letta + model_gateway
+  dev_ui/          Streamlit Dev UI
+  model_gateway/   OpenAI-compatible route layer for Letta
+
 packages/
-  domain/       Shared Pydantic models and exceptions
-  letta_integration/   Letta gateway interfaces and implementations
-  memory_pipeline/     Local memory extraction logic
-  reply_providers/     Provider adapters for user-facing responses
-characters/
-  manifests/    Versioned character definitions
-  seeds/        Reserved for generated seed artifacts
-infra/
-  compose/      Ubuntu Docker stack for Letta, Postgres, and Ollama
-  env/          Example environment files
-scripts/        Small helper scripts
-tests/          Integration and API tests
-docs/           Planning, runbooks, ADRs, and references
+  domain/              Shared runtime types
+  letta_integration/   Letta client and in-memory test gateway
 ```
 
-## Why This Shape
+## Supporting Directories
 
-- `apps/` keeps user-facing entrypoints isolated from reusable code
-- `packages/` makes the memory, provider, and domain layers testable in isolation
-- `characters/` keeps versioned character manifests and seed definitions with the code
-- `infra/` makes the Ubuntu stack part of the project rather than tribal knowledge
-- `docs/` keeps architecture and next-phase information in repo truth
+```text
+characters/
+  manifests/      Character definitions
+  templates/      Commented manifest template
+  seeds/          File-backed bootstrap registry
+
+infra/
+  compose/        Docker stack
+  docker/         Service Dockerfiles
+  model_gateway/  Gateway route config
+  ollama/         GGUF/Modelfile assets
+  letta/          Cached NLTK assets
+
+scripts/          Bootstrap, status, stop, and cleanup helpers
+docs/             Architecture, runbooks, and planning notes
+tests/            Integration and e2e placeholders
+```
+
+## Legacy Packages
+
+`packages/memory_pipeline` and `packages/reply_providers` remain in the repo only as historical artifacts from the pre-Step-2 runtime. The active runtime no longer depends on them.

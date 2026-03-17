@@ -1,149 +1,90 @@
 # Character Manifest Guide
 
-## Why This Exists
+## Purpose
 
-Character manifests now define two different things clearly and separately:
+Character manifests now describe only two things:
 
-- the final reply-provider behavior for a character
-- the Letta memory seeded for each user-agent session
+- character identity and memory seed
+- Letta-facing runtime route choices
 
-The current schema is a clean dev-phase break. Older keys such as `persona`, `system_prompt`,
-`shared_blocks`, and `shared_passages` are intentionally no longer supported.
+They no longer carry raw provider endpoints, headers, or app-managed memory policy knobs.
 
-## Old to New Mapping
-
-| Old key | New key | Meaning now |
-|---|---|---|
-| `persona` + `system_prompt` | `system_instructions` | One instruction layer sent to the final reply provider |
-| `shared_blocks` | `shared_memory_blocks` | Shared Letta memory blocks attached to every agent for the character |
-| `shared_passages` | `archival_memory_seed` | Real archival-memory items copied into each new agent |
-| `memory.archival_search_limit` | `memory.archival_memory_search_limit` | Retrieval count for live turns |
-| `memory.snapshot_passage_limit` | `memory.snapshot_archival_memory_limit` | Snapshot count in the Dev UI |
-| `memory.recent_message_window` | `memory.conversation_history_window` | Recent turn window included in the final call |
-| `memory.initial_human_block` | `memory.initial_user_memory` | Initial Letta `human` block |
-
-## Important Definitions
+## Current Schema
 
 ### `system_instructions`
 
-`system_instructions` is the full instruction layer used for the final reply-provider call.
+The full Letta system layer for the primary conversational agent.
 
-Good fit:
+Use it for:
 
-- identity and stable character truth
-- language and tone rules
+- identity and stable behavior
+- language rules
 - honesty constraints
 - formatting bans
-- output-length preferences
-
-This field is shown in the Dev UI under `Prompt Pipeline -> System Instructions`.
+- style boundaries
 
 ### `shared_memory_blocks`
 
-`shared_memory_blocks` are shared across every Letta agent for the same character.
+Shared Letta memory blocks attached to every session for the same character.
 
-If three users talk to `lin_xiaotang`, they each get a separate Letta agent, but all three agents
-attach the same shared memory blocks for that character.
-
-These blocks are part of the working context.
-
-Use them for reusable, separately inspectable facets such as:
+Use them for reusable facets such as:
 
 - `style`
 - `background`
 - `relationship_rules`
 - `safety_overrides`
 
+Supported fields per block:
+
+- `label`
+- `value`
+- optional `description`
+- optional `limit`
+- optional `read_only`
+
 ### `archival_memory_seed`
 
-`archival_memory_seed` is no longer a fake lore block.
+Short archival-memory entries copied into each new user/character session exactly once.
 
-Each item is copied into the new agent's archival memory once, when that `(user_id, character_id)`
-pair is first created.
+These are real archival-memory items, not synthesized lore blocks.
 
-That means:
+Use them for durable snippets that should be searchable later.
 
-- it is not shared live across all users
-- it is stored as real archival memory
-- it can later appear in retrieval and in the Dev UI's archival-memory views
+### `letta_runtime`
 
-Use it for evergreen facts or motifs that should behave like retrievable archival memory.
+Selects either native Letta provider handles or named `model_gateway` routes for the character.
 
-### `memory.initial_user_memory`
+- `primary_agent.model_route`
+- `sleep_time_agent.enabled`
+- `sleep_time_agent.model_route`
+- `sleep_time_agent.frequency`
 
-This is the starting Letta `human` block for a new user-agent pair.
+Use slashless names such as `doubao_primary`, `ollama_primary`, and `ollama_sleep_time` for the standard dev stack. Native `provider/model` strings such as `ollama/memllm-qwen3.5-9b-q4km:latest` remain supported for experiments, but they are not the default because the current Qwen GGUF path needs gateway-side shaping like `think: false`.
 
-Use it for a neutral initial summary such as:
+The manifest should not contain raw provider URLs or auth data. Those belong in the gateway route config.
 
-- no stable preferences are known yet
-- the relationship is new
-- no confirmed nickname or long-term context exists yet
+## Old to New Mapping
 
-## How the Current Runtime Uses These Fields
-
-For the current phase-1 runtime:
-
-- Letta stores and retrieves memory
-- the app still performs post-turn memory extraction with local Ollama
-- the final user-facing reply still goes to the configured provider, which may be DouBao or Ollama
-
-The final provider call is assembled from:
-
-- `system_instructions`
-- working-context memory blocks
-- retrieved archival memory
-- the recent conversation window
-
-So if you inspect the Dev UI, the pipeline is:
-
-- `System Instructions`
-- `Working Context`
-- `Conversation Window`
-- `Retrieved Archival Memory`
-- `Final Provider Call`
+| Old key | Step 2 replacement |
+|---|---|
+| `persona` + `system_prompt` | `system_instructions` |
+| `shared_blocks` | `shared_memory_blocks` |
+| `shared_passages` | `archival_memory_seed` |
+| `reply_provider.*` | `letta_runtime.primary_agent.model_route` plus gateway config |
+| `memory.*` | removed from the manifest; Letta owns the live runtime behavior |
+| `initial_user_memory` | removed; the API creates a standard `human` block for each new session |
 
 ## Authoring Guidance
 
-### Put identity and rules in one place
-
-Because `system_instructions` replaced the old `persona` + `system_prompt` split, do not try to
-recreate the old split manually. Write one coherent instruction block instead.
-
-### Keep shared blocks focused
-
-Do not duplicate the whole character description into every shared memory block.
-Each block should have one clear job.
-
-### Use archival seed only for retrievable facts
-
-`archival_memory_seed` should be a list of short, durable snippets.
-Do not use it for long essays or giant instruction paragraphs.
-
-### Chinese perspective rule
-
-For Chinese characters, keep perspective consistent.
-Usually that means:
-
-- use `你` for direct instructions to the model
-- use concise noun-phrase facts for archival seed items
-- avoid mixing `你` and `她` unless the distinction is very deliberate
-
-## Provider Parameter Notes
-
-The template includes brief inline explanations for each reply-provider field, including:
-
-- `kind`: which adapter handles the final reply call
-- `base_url`: base server address for providers such as Ollama
-- `endpoint`: full target URL for `custom_simple_http`
-- `model`: provider-side model identifier
-- `transport`: HTTP method for `custom_simple_http`
-- `timeout_seconds`: per-request timeout
-- `headers`: optional request headers
-- `extra.temperature`: randomness control for supported providers
-- `extra.num_predict`: output-length cap for Ollama native generation
-
-Remember that `extra` is provider-specific. If a field is not recognized by that adapter, it will
-be ignored or passed through depending on the provider implementation.
+- Keep `system_instructions` coherent. Do not recreate the old `persona` vs `system_prompt` split manually.
+- Keep `shared_memory_blocks` focused. Each block should have one job.
+- Keep `archival_memory_seed` short and durable. Think searchable snippets, not essays.
+- For Chinese characters, keep perspective consistent. Usually that means direct instructions use `你` and archival snippets stay neutral and concise.
+- Choose route types intentionally:
+  - `doubao_primary` for the mediated external surface route through `model_gateway`
+  - `ollama_primary` for the default local chat route in the dev stack
+  - `ollama_sleep_time` for the default local sleep-time route in the dev stack
+  - native `ollama/...` handles only when you have verified that Letta-native calls do not need extra gateway shaping
 
 ## Template
 

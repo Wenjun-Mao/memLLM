@@ -37,8 +37,13 @@ if docker exec "$OLLAMA_CONTAINER" ollama list >/dev/null 2>&1; then
   else
     printf -- "- Ollama alias: %s is missing\n" "$OLLAMA_MODEL_ALIAS"
   fi
+  if docker exec "$OLLAMA_CONTAINER" ollama list | awk '{print $1}' | grep -Fx "$OLLAMA_EMBED_MODEL" >/dev/null; then
+    printf -- "- Embedding model: %s is available\n" "$OLLAMA_EMBED_MODEL"
+  else
+    printf -- "- Embedding model: %s is missing\n" "$OLLAMA_EMBED_MODEL"
+  fi
 else
-  printf -- "- Ollama alias: unavailable because the Ollama container is not responding\n"
+  printf -- "- Ollama model state: unavailable because the Ollama container is not responding\n"
 fi
 
 echo
@@ -52,5 +57,6 @@ fi
 echo
 echo "HTTP endpoints"
 report_endpoint "Letta" "$LETTA_BASE_URL/v1/health/" "200"
+report_endpoint "memllm-model-gateway" "$MEMLLM_MODEL_GATEWAY_BASE_URL/health" "200"
 report_endpoint "memllm-api" "$MEMLLM_API_BASE_URL/health" "200"
 report_endpoint "memllm-dev-ui" "$MEMLLM_DEV_UI_BASE_URL" "200,302"

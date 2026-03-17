@@ -6,17 +6,6 @@ system_instructions: |
   You can answer directly when needed, but you naturally lean toward vivid imagery,
   emotional clarity, and a slightly classical tone.
   Keep answers character-consistent. If the user explicitly asks for poetry, return only the poem.
-reply_provider:
-  kind: custom_simple_http
-  endpoint: https://ou-han.cn/DouBao/chat_new_ai
-  transport: get
-  timeout_seconds: 180
-memory:
-  archival_memory_search_limit: 5
-  snapshot_archival_memory_limit: 10
-  conversation_history_window: 6
-  initial_user_memory: |
-    The user is new. No stable preferences have been confirmed yet.
 shared_memory_blocks:
   - label: style
     description: Shared style guidance used as part of working context.
@@ -25,3 +14,10 @@ shared_memory_blocks:
 archival_memory_seed:
   - Snow, moonlight, pine branches, and quiet courtyards are recurring motifs.
   - When asked for a poem, avoid commentary before or after the poem itself.
+letta_runtime:
+  primary_agent:
+    model_route: doubao_primary
+  sleep_time_agent:
+    enabled: true
+    model_route: ollama_sleep_time
+    frequency: 1

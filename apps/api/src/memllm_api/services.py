@@ -1,10 +1,8 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
-from urllib.parse import urlsplit
+from typing import Any
 
-from loguru import logger
 from memllm_domain import (
     CharacterNotFoundError,
     CharacterRecord,
@@ -12,172 +10,141 @@ from memllm_domain import (
     ChatMessage,
     ChatRequest,
     ChatResponse,
-    ChatTurn,
+    GatewayTraceDebug,
+    LettaSession,
+    LettaStepDebug,
     MemoryBlock,
-    MemoryContext,
-    MemoryDelta,
     MemorySnapshot,
     MemoryWritebackDebug,
     PromptPipelineDebug,
-    ProviderConfig,
-    ReplyRequest,
+    ProviderCallDebug,
     SeedReport,
     SeedReportItem,
-    SessionRecord,
     SessionSummary,
     TraceEvent,
     WorkingContextDebug,
+    is_native_provider_handle,
 )
-from memllm_letta_integration import LettaEmbeddingConfig, LettaGateway, LettaLLMConfig
-from memllm_memory_pipeline import MemoryExtractorRegistry
-from memllm_reply_providers import ReplyProviderRegistry
+from memllm_letta_integration import (
+    LettaEmbeddingConfig,
+    LettaGateway,
+    LettaLLMConfig,
+    SessionCreateConfig,
+)
 
 from memllm_api.manifests import CharacterManifestLoader
+from memllm_api.model_gateway_client import (
+    InMemoryModelGatewayDebugClient,
+    ModelGatewayDebugClient,
+)
+from memllm_api.registry import CharacterBootstrapEntry, FileBootstrapRegistry
 from memllm_api.settings import ApiSettings
-from memllm_api.store import MetadataStore
 
 TRACE_EVENT_SPECS = {
-    'session_resolution': {
-        'title': 'Session Resolution',
-        'description': 'Create or reuse the Letta agent for this exact user and character pair.',
-        'paper_mapping': 'Agent lifecycle before working context is assembled.',
+    "session_resolution": {
+        "title": "Session Resolution",
+        "description": "Create or reuse the Letta-managed primary agent and sleep-time partner.",
+        "paper_mapping": "Agent lifecycle before the main conversational loop.",
     },
-    'memory_blocks_read': {
-        'title': 'Memory Blocks Read',
-        'description': 'Read the current Letta memory blocks that make up the working context.',
-        'paper_mapping': 'Working Context.',
-    },
-    'archival_memory_search': {
-        'title': 'Archival Memory Search',
-        'description': 'Retrieve the archival memory items Letta returns for this turn.',
-        'paper_mapping': 'Archival Memory.',
-    },
-    'conversation_window_load': {
-        'title': 'Conversation Window Load',
-        'description': (
-            'Load the recent conversation window that will be included in the '
-            'final call.'
+    "primary_agent_response": {
+        "title": "Primary Agent Response",
+        "description": (
+            "The primary Letta agent handled the user message and produced the live reply."
         ),
-        'paper_mapping': 'FIFO Queue analogue.',
+        "paper_mapping": "Main MemGPT conversation loop.",
     },
-    'final_prompt_assembly': {
-        'title': 'Final Prompt Assembly',
-        'description': (
-            'Assemble system instructions, working context, conversation window, '
-            'and retrieved archival memory for the final provider call.'
+    "letta_primary_step": {
+        "title": "Letta Primary Step",
+        "description": (
+            "A Letta step from the primary agent, including tool use or final assistant output."
         ),
-        'paper_mapping': 'System Instructions + Working Context + FIFO-style conversation window.',
+        "paper_mapping": "Working Context + FIFO queue execution.",
     },
-    'final_provider_call': {
-        'title': 'Final Provider Call',
-        'description': 'Send the final user-facing request to DouBao or local Ollama.',
-        'paper_mapping': 'Final reply generation step in this app-specific pipeline.',
+    "gateway_route_call": {
+        "title": "Gateway Route Call",
+        "description": (
+            "A model-gateway call triggered by Letta for policy, surface rendering, or embeddings."
+        ),
+        "paper_mapping": "Model endpoint invocation visible from the Letta-native runtime.",
     },
-    'memory_extractor_call': {
-        'title': 'Local Memory Extractor',
-        'description': 'Run the local post-turn memory extractor that prepares Letta writebacks.',
-        'paper_mapping': 'App-managed memory processing after the final reply.',
+    "native_provider_call": {
+        "title": "Native Provider Call",
+        "description": (
+            "A Letta-native provider/model handle was used directly, "
+            "so the raw HTTP payload stays inside Letta."
+        ),
+        "paper_mapping": "Model endpoint invocation visible only through Letta-exposed state.",
     },
-    'memory_block_update': {
-        'title': 'Memory Block Update',
-        'description': 'Update the pair-specific Letta user memory block.',
-        'paper_mapping': 'Working Context update.',
+    "sleep_time_wait": {
+        "title": "Sleep-Time Wait",
+        "description": (
+            "Wait for the Letta sleep-time/background agent so the "
+            "full current-round trace is visible."
+        ),
+        "paper_mapping": "Background memory consolidation.",
     },
-    'archival_memory_insert': {
-        'title': 'Archival Memory Insert',
-        'description': 'Insert durable snippets into Letta archival memory.',
-        'paper_mapping': 'Archival Memory write.',
+    "letta_sleep_time_step": {
+        "title": "Sleep-Time Step",
+        "description": (
+            "A Letta sleep-time/background step that updated the primary agent memory surfaces."
+        ),
+        "paper_mapping": "Background memory consolidation.",
     },
 }
 
 
 @dataclass
-class PendingMemoryWrite:
-    character: CharacterRecord
-    session: SessionRecord
-    memory_context: MemoryContext
-    user_message: str
-    assistant_message: str
-
-
-@dataclass
-class PersistedTurnDebug:
-    memory_writeback: MemoryWritebackDebug
-    trace_events: list[TraceEvent]
-
-
 class CharacterSeeder:
-    def __init__(
-        self,
-        *,
-        loader: CharacterManifestLoader,
-        store: MetadataStore,
-        letta_gateway: LettaGateway,
-    ) -> None:
-        self._loader = loader
-        self._store = store
-        self._letta_gateway = letta_gateway
+    loader: CharacterManifestLoader
+    registry: FileBootstrapRegistry
+    letta_gateway: LettaGateway
 
     def seed_all(self) -> SeedReport:
         items: list[SeedReportItem] = []
-        for record in self._loader.load_all():
-            existing = self._store.get_character(record.character_id)
-            shared_block_ids = self._letta_gateway.upsert_shared_memory_blocks(
+        valid_ids: set[str] = set()
+        for record in self.loader.load_all():
+            valid_ids.add(record.character_id)
+            existing = self.registry.get(record.character_id)
+            shared_block_ids = self.letta_gateway.upsert_shared_memory_blocks(
                 blocks=record.seed_shared_memory_blocks(),
                 existing_block_ids=existing.shared_block_ids if existing else None,
             )
-            upserted, created = self._store.upsert_character(
-                record.model_copy(update={'shared_block_ids': shared_block_ids})
+            self.registry.upsert(
+                CharacterBootstrapEntry(
+                    character_id=record.character_id,
+                    manifest_checksum=record.manifest_checksum,
+                    shared_block_ids=shared_block_ids,
+                )
             )
             items.append(
                 SeedReportItem(
-                    character_id=upserted.character_id,
-                    display_name=upserted.display_name,
-                    created=created,
-                    shared_block_ids=upserted.shared_block_ids,
+                    character_id=record.character_id,
+                    display_name=record.display_name,
+                    created=existing is None,
+                    shared_block_ids=shared_block_ids,
                 )
             )
-            logger.info('Seeded character {}', upserted.character_id)
+        self.registry.prune(valid_ids)
         return SeedReport(seeded=items)
-
-
-_AGENT_NAME_UNSAFE_RE = re.compile(r"[^\w\s\-']+", flags=re.UNICODE)
-
-
-def build_agent_name(*, character_id: str, user_id: str) -> str:
-    raw_name = f'{character_id}__{user_id}'
-    sanitized = _AGENT_NAME_UNSAFE_RE.sub('_', raw_name)
-    sanitized = re.sub(r'_+', '_', sanitized).strip(' _')
-    return sanitized or 'memllm-agent'
 
 
 def _event(kind: str, *, request: object = None, response: object = None) -> TraceEvent:
     spec = TRACE_EVENT_SPECS[kind]
     return TraceEvent(
         kind=kind,
-        title=spec['title'],
-        description=spec['description'],
-        paper_mapping=spec['paper_mapping'],
+        title=spec["title"],
+        description=spec["description"],
+        paper_mapping=spec["paper_mapping"],
         request=request,
         response=response,
     )
 
 
-def _model_dump_list(items: list[object]) -> list[object]:
-    result: list[object] = []
-    for item in items:
-        if hasattr(item, 'model_dump'):
-            result.append(item.model_dump(mode='json'))
-        else:
-            result.append(item)
-    return result
-
-
-def _split_working_context(memory_context: MemoryContext) -> WorkingContextDebug:
+def _split_working_context(memory_blocks: list[MemoryBlock]) -> WorkingContextDebug:
     shared_memory_blocks: list[MemoryBlock] = []
     user_memory_blocks: list[MemoryBlock] = []
-    for block in memory_context.memory_blocks:
-        if block.scope == 'shared':
+    for block in memory_blocks:
+        if block.scope == "shared":
             shared_memory_blocks.append(block)
         else:
             user_memory_blocks.append(block)
@@ -192,347 +159,500 @@ class ChatOrchestrator:
         self,
         *,
         settings: ApiSettings,
-        store: MetadataStore,
+        loader: CharacterManifestLoader,
+        registry: FileBootstrapRegistry,
         letta_gateway: LettaGateway,
-        reply_providers: ReplyProviderRegistry,
-        memory_extractors: MemoryExtractorRegistry,
+        model_gateway_debug: ModelGatewayDebugClient | InMemoryModelGatewayDebugClient,
     ) -> None:
         self._settings = settings
-        self._store = store
+        self._loader = loader
+        self._registry = registry
         self._letta_gateway = letta_gateway
-        self._reply_providers = reply_providers
-        self._memory_extractors = memory_extractors
+        self._model_gateway_debug = model_gateway_debug
 
     def list_characters(self) -> list[CharacterRecord]:
-        return self._store.list_characters()
+        return self._loader.load_all()
 
-    def prepare_chat(self, request: ChatRequest) -> tuple[ChatResponse, PendingMemoryWrite]:
-        character = self._store.get_character(request.character_id)
+    def chat(self, request: ChatRequest) -> ChatResponse:
+        character = self._loader.load_character(request.character_id)
         if not character:
-            raise CharacterNotFoundError(f'Unknown character: {request.character_id}')
+            raise CharacterNotFoundError(f"Unknown character: {request.character_id}")
 
-        trace_events: list[TraceEvent] = []
-        session, created = self._get_or_create_session(request.user_id, character)
-        trace_events.append(
-            _event(
-                'session_resolution',
-                request={
-                    'user_id': request.user_id,
-                    'character_id': character.character_id,
-                },
-                response={
-                    'agent_id': session.agent_id,
-                    'created': created,
-                    'agent_name': build_agent_name(
-                        character_id=character.character_id,
-                        user_id=request.user_id,
-                    ),
-                    'archival_memory_seed_count': (
-                        len(character.archival_memory_seed) if created else 0
-                    ),
-                },
+        session, created = self._letta_gateway.resolve_session(
+            create=SessionCreateConfig(
+                user_id=request.user_id,
+                character=character,
+                primary_llm=self._build_primary_llm(character),
+                sleep_time_llm=self._build_sleep_time_llm(character),
+                embedding=self._build_embedding_config(),
+                default_user_memory=self._settings.letta_default_user_memory_block,
             )
         )
 
-        memory_context = self._letta_gateway.get_memory_context(
-            agent_id=session.agent_id,
+        trace_events: list[TraceEvent] = [
+            _event(
+                "session_resolution",
+                request={"user_id": request.user_id, "character_id": character.character_id},
+                response={
+                    "created": created,
+                    "primary_agent_id": session.primary_agent_id,
+                    "sleep_time_agent_id": session.sleep_time_agent_id,
+                    "managed_group_id": session.managed_group_id,
+                },
+            )
+        ]
+
+        pre_memory_context = self._letta_gateway.get_memory_context(
+            agent_id=session.primary_agent_id,
             query=request.message,
-            top_k=character.memory.archival_memory_search_limit,
+            top_k=6,
         )
-        trace_events.append(
-            _event(
-                'memory_blocks_read',
-                request={'agent_id': session.agent_id},
-                response={
-                    'memory_blocks': _model_dump_list(memory_context.memory_blocks),
-                },
+        baseline_primary_ids = {
+            step.step_id
+            for step in self._letta_gateway.list_recent_steps(
+                agent_id=session.primary_agent_id, limit=self._settings.debug_step_limit
             )
+        }
+        baseline_sleep_ids: set[str] = set()
+        baseline_sleep_completion = None
+        if session.sleep_time_agent_id:
+            baseline_sleep_ids = {
+                step.step_id
+                for step in self._letta_gateway.list_recent_steps(
+                    agent_id=session.sleep_time_agent_id,
+                    limit=self._settings.debug_step_limit,
+                )
+            }
+            baseline_sleep_completion = self._letta_gateway.get_agent_last_completion(
+                agent_id=session.sleep_time_agent_id
+            )
+        baseline_gateway_sequence = self._model_gateway_debug.latest_sequence()
+
+        turn = self._letta_gateway.send_user_message(
+            primary_agent_id=session.primary_agent_id,
+            message=request.message,
+            max_steps=self._settings.letta_message_max_steps,
         )
         trace_events.append(
             _event(
-                'archival_memory_search',
-                request={
-                    'agent_id': session.agent_id,
-                    'query': request.message,
-                    'top_k': character.memory.archival_memory_search_limit,
-                },
-                response={
-                    'archival_memory': _model_dump_list(memory_context.archival_memory),
-                },
+                "primary_agent_response",
+                request={"primary_agent_id": session.primary_agent_id, "message": request.message},
+                response=turn.raw_response,
             )
         )
 
-        messages = self._build_conversation_window(request=request, character=character)
-        trace_events.append(
-            _event(
-                'conversation_window_load',
-                request={
-                    'conversation_history_window': character.memory.conversation_history_window,
-                },
-                response={'conversation_window': _model_dump_list(messages)},
+        sleep_time_completed = True
+        if self._settings.debug_wait_for_sleep_time and session.sleep_time_agent_id:
+            sleep_time_completed = self._letta_gateway.wait_for_sleep_time(
+                session=session,
+                baseline_completion=baseline_sleep_completion,
+                timeout_seconds=self._settings.debug_sleep_time_timeout_seconds,
+                poll_interval_seconds=self._settings.debug_sleep_time_poll_interval_seconds,
             )
-        )
-
-        provider_config = self._resolve_reply_provider_config(character.reply_provider)
-        provider_request = ReplyRequest(
-            character=character,
-            user_id=request.user_id,
-            messages=messages,
-            memory_context=memory_context,
-        )
-        provider_response = self._reply_providers.generate(
-            config=provider_config,
-            request=provider_request,
-        )
-        prompt_pipeline = PromptPipelineDebug(
-            system_instructions=character.system_instructions,
-            working_context=_split_working_context(memory_context),
-            conversation_window=messages,
-            retrieved_archival_memory=memory_context.archival_memory,
-            final_provider_payload=(
-                provider_response.request_debug.payload
-                if provider_response.request_debug is not None
-                else None
-            ),
-        )
-        trace_events.append(
-            _event(
-                'final_prompt_assembly',
-                request={
-                    'provider_kind': provider_config.kind,
-                    'character_id': character.character_id,
-                },
-                response=prompt_pipeline.model_dump(mode='json'),
-            )
-        )
-        if provider_response.request_debug is not None:
             trace_events.append(
                 _event(
-                    'final_provider_call',
+                    "sleep_time_wait",
                     request={
-                        'method': provider_response.request_debug.method,
-                        'url': provider_response.request_debug.url,
-                        'headers': provider_response.request_debug.headers,
-                        'payload': provider_response.request_debug.payload,
+                        "sleep_time_agent_id": session.sleep_time_agent_id,
+                        "timeout_seconds": self._settings.debug_sleep_time_timeout_seconds,
                     },
-                    response=provider_response.request_debug.response,
+                    response={"completed": sleep_time_completed},
                 )
             )
 
+        primary_route = character.letta_runtime.primary_agent.model_route
+        primary_route_is_native = is_native_provider_handle(primary_route)
+        gateway_traces = self._model_gateway_debug.list_traces(
+            since_sequence=baseline_gateway_sequence,
+            limit=self._settings.model_gateway_trace_limit,
+        )
+        if (
+            not gateway_traces
+            and not primary_route_is_native
+            and isinstance(self._model_gateway_debug, InMemoryModelGatewayDebugClient)
+        ):
+            gateway_traces = self._synthesize_memory_traces(character=character, request=request)
+
+        primary_steps = self._new_steps(
+            agent_id=session.primary_agent_id,
+            baseline_ids=baseline_primary_ids,
+        )
+        sleep_steps = []
+        if session.sleep_time_agent_id:
+            sleep_steps = self._new_steps(
+                agent_id=session.sleep_time_agent_id,
+                baseline_ids=baseline_sleep_ids,
+            )
+
+        for step in primary_steps:
+            trace_events.append(
+                _event(
+                    "letta_primary_step",
+                    response=step.model_dump(mode="json"),
+                )
+            )
+        for trace in gateway_traces:
+            trace_events.append(
+                _event(
+                    "gateway_route_call",
+                    response=trace,
+                )
+            )
+        native_provider_payload = None
+        if primary_route_is_native:
+            native_provider_payload = self._build_native_provider_payload(
+                character=character,
+                request=request,
+            )
+            trace_events.append(
+                _event(
+                    "native_provider_call",
+                    request=native_provider_payload,
+                    response={
+                        "model": primary_route,
+                        "reply": turn.reply,
+                        "source": "derived_from_letta_native_provider",
+                    },
+                )
+            )
+        for step in sleep_steps:
+            trace_events.append(
+                _event(
+                    "letta_sleep_time_step",
+                    response=step.model_dump(mode="json"),
+                )
+            )
+
+        prompt_trace = self._pick_prompt_trace(gateway_traces, primary_route)
+        final_trace = self._pick_final_provider_trace(gateway_traces, primary_route)
+        final_provider_call = self._build_final_provider_call(final_trace)
+        prompt_pipeline = self._build_prompt_pipeline(
+            character=character,
+            memory_blocks=pre_memory_context.memory_blocks,
+            archival_memory=pre_memory_context.archival_memory,
+            prompt_trace=prompt_trace,
+        )
+        if primary_route_is_native and native_provider_payload is not None:
+            final_provider_call = self._build_native_provider_call(
+                route_name=primary_route,
+                payload=native_provider_payload,
+                reply=turn.reply,
+            )
+            prompt_pipeline = self._build_native_prompt_pipeline(
+                character=character,
+                memory_blocks=pre_memory_context.memory_blocks,
+                archival_memory=pre_memory_context.archival_memory,
+                payload=native_provider_payload,
+            )
         response = ChatResponse(
             user_id=request.user_id,
             character_id=request.character_id,
-            agent_id=session.agent_id,
-            reply=provider_response.content,
-            provider_kind=provider_response.provider_kind,
+            agent_id=session.primary_agent_id,
+            reply=turn.reply,
+            provider_kind=character.letta_runtime.primary_agent.model_route,
             debug=ChatDebugTrace(
-                final_provider_call=provider_response.request_debug,
+                final_provider_call=final_provider_call,
                 prompt_pipeline=prompt_pipeline,
                 trace_events=trace_events,
-                memory_writeback=None,
+                memory_writeback=MemoryWritebackDebug(
+                    status="completed" if sleep_time_completed else "timed_out",
+                    sleep_time_agent_id=session.sleep_time_agent_id,
+                    letta_steps=sleep_steps,
+                    gateway_traces=[
+                        self._trace_to_debug(trace)
+                        for trace in gateway_traces
+                        if trace.get("route_name")
+                        == character.letta_runtime.sleep_time_agent.model_route
+                    ],
+                    notes=(
+                        ["Sleep-time agent is disabled for this character."]
+                        if not session.sleep_time_agent_id
+                        else []
+                    ),
+                ),
             ),
         )
-        pending = PendingMemoryWrite(
-            character=character,
-            session=session,
-            memory_context=memory_context,
-            user_message=request.message,
-            assistant_message=provider_response.content,
-        )
-        return response, pending
-
-    def persist_turn(
-        self,
-        pending: PendingMemoryWrite,
-        *,
-        capture_debug: bool = False,
-    ) -> PersistedTurnDebug | None:
-        extraction = self._memory_extractors.extract(
-            kind=self._settings.memory_extractor_kind,
-            character=pending.character,
-            memory_context=pending.memory_context,
-            user_message=pending.user_message,
-            assistant_message=pending.assistant_message,
-        )
-        operations = self._letta_gateway.apply_memory_delta(
-            agent_id=pending.session.agent_id,
-            delta=extraction.delta,
-        )
-        self._store.add_chat_turn(
-            ChatTurn(
-                user_id=pending.session.user_id,
-                character_id=pending.session.character_id,
-                agent_id=pending.session.agent_id,
-                user_message=pending.user_message,
-                assistant_message=pending.assistant_message,
-            )
-        )
-        logger.debug(
-            'Persisted turn for user={} character={}',
-            pending.session.user_id,
-            pending.session.character_id,
-        )
-        if not capture_debug:
-            return None
-
-        trace_events = [
-            _event(
-                'memory_extractor_call',
-                request=extraction.request_payload,
-                response=extraction.response_payload,
-            )
-        ]
-        for operation in operations:
-            trace_events.append(
-                _event(
-                    operation.kind,
-                    request={
-                        'target': operation.target,
-                        'value': operation.value,
-                    },
-                    response=operation.model_dump(mode='json'),
-                )
-            )
-        return PersistedTurnDebug(
-            memory_writeback=MemoryWritebackDebug(
-                extractor_kind=self._settings.memory_extractor_kind,
-                extractor_request=extraction.request_payload,
-                extractor_response=extraction.response_payload,
-                write_operations=operations,
-            ),
-            trace_events=trace_events,
-        )
+        return response
 
     def get_memory_snapshot(self, user_id: str, character_id: str) -> MemorySnapshot:
-        character = self._store.get_character(character_id)
+        character = self._loader.load_character(character_id)
         if not character:
-            raise CharacterNotFoundError(f'Unknown character: {character_id}')
-        session = self._store.get_session(user_id=user_id, character_id=character_id)
+            raise CharacterNotFoundError(f"Unknown character: {character_id}")
+        session = self._find_session(user_id=user_id, character_id=character_id)
         return self._letta_gateway.get_memory_snapshot(
             user_id=user_id,
             character_id=character_id,
-            agent_id=session.agent_id if session else None,
+            session=session,
             shared_memory_blocks=character.seed_shared_memory_blocks(),
-            archival_memory_limit=character.memory.snapshot_archival_memory_limit,
+            archival_memory_limit=12,
         )
 
     def list_sessions(self) -> list[SessionSummary]:
         characters = {
-            character.character_id: character.display_name
-            for character in self._store.list_characters()
+            character.character_id: character.display_name for character in self._loader.load_all()
         }
         return [
             SessionSummary(
                 user_id=session.user_id,
                 character_id=session.character_id,
                 character_display_name=characters.get(session.character_id, session.character_id),
-                agent_id=session.agent_id,
+                primary_agent_id=session.primary_agent_id,
+                sleep_time_agent_id=session.sleep_time_agent_id,
+                managed_group_id=session.managed_group_id,
                 created_at=session.created_at,
                 updated_at=session.updated_at,
             )
-            for session in self._store.list_sessions()
+            for session in self._letta_gateway.list_sessions()
         ]
 
     def delete_session(self, *, user_id: str, character_id: str) -> SessionSummary | None:
-        session = self._store.get_session(user_id=user_id, character_id=character_id)
+        session = self._find_session(user_id=user_id, character_id=character_id)
         if session is None:
             return None
-        character = self._store.get_character(character_id)
-        self._letta_gateway.delete_session_agent(agent_id=session.agent_id)
-        removed = self._store.delete_session(user_id=user_id, character_id=character_id)
-        if removed is None:
-            return None
+        character = self._loader.load_character(character_id)
+        self._letta_gateway.delete_session(session=session)
         return SessionSummary(
-            user_id=removed.user_id,
-            character_id=removed.character_id,
-            character_display_name=(
-                character.display_name if character else removed.character_id
-            ),
-            agent_id=removed.agent_id,
-            created_at=removed.created_at,
-            updated_at=removed.updated_at,
+            user_id=session.user_id,
+            character_id=session.character_id,
+            character_display_name=(character.display_name if character else character_id),
+            primary_agent_id=session.primary_agent_id,
+            sleep_time_agent_id=session.sleep_time_agent_id,
+            managed_group_id=session.managed_group_id,
+            created_at=session.created_at,
+            updated_at=session.updated_at,
         )
 
-    def _get_or_create_session(
-        self, user_id: str, character: CharacterRecord
-    ) -> tuple[SessionRecord, bool]:
-        session = self._store.get_session(user_id=user_id, character_id=character.character_id)
-        if session:
-            return session, False
-
-        agent_id = self._letta_gateway.create_session_agent(
-            agent_name=build_agent_name(character_id=character.character_id, user_id=user_id),
-            shared_block_ids=list(character.shared_block_ids.values()),
-            model=self._settings.letta_model,
-            embedding=self._settings.letta_embedding,
-            llm_config=self._build_letta_llm_config(),
-            embedding_config=self._build_letta_embedding_config(),
-            initial_user_memory=character.memory.initial_user_memory,
-        )
-        if character.archival_memory_seed:
-            self._letta_gateway.apply_memory_delta(
-                agent_id=agent_id,
-                delta=MemoryDelta(archival_memory_entries=character.archival_memory_seed),
-            )
-        created = self._store.upsert_session(
-            SessionRecord(
-                user_id=user_id,
-                character_id=character.character_id,
-                agent_id=agent_id,
-            )
-        )
-        return created, True
-
-    def _build_letta_llm_config(self) -> LettaLLMConfig | None:
-        if not self._settings.letta_use_direct_model_config:
-            return None
+    def _build_primary_llm(self, character: CharacterRecord) -> LettaLLMConfig:
+        route = character.letta_runtime.primary_agent.model_route
+        native_provider = is_native_provider_handle(route)
         return LettaLLMConfig(
-            model=self._settings.letta_model_name,
-            endpoint=self._settings.letta_model_endpoint,
-            context_window=self._settings.letta_model_context_window,
-            max_tokens=self._settings.letta_model_max_tokens,
+            model_route=route,
+            endpoint=(None if native_provider else self._settings.letta_gateway_endpoint),
+            context_window=self._settings.letta_context_window,
+            max_tokens=self._settings.letta_max_tokens,
+            native_provider=native_provider,
         )
 
-    def _build_letta_embedding_config(self) -> LettaEmbeddingConfig | None:
-        if not self._settings.letta_use_direct_model_config:
+    def _build_sleep_time_llm(self, character: CharacterRecord) -> LettaLLMConfig | None:
+        if not character.letta_runtime.sleep_time_agent.enabled:
             return None
+        route = character.letta_runtime.sleep_time_agent.model_route
+        native_provider = is_native_provider_handle(route)
+        return LettaLLMConfig(
+            model_route=route,
+            endpoint=(None if native_provider else self._settings.letta_gateway_endpoint),
+            context_window=self._settings.letta_context_window,
+            max_tokens=self._settings.letta_max_tokens,
+            native_provider=native_provider,
+        )
+
+    def _build_embedding_config(self) -> LettaEmbeddingConfig:
         return LettaEmbeddingConfig(
-            model=self._settings.letta_embedding_name,
+            model_route=self._settings.letta_embedding_route,
             endpoint=self._settings.letta_embedding_endpoint,
             embedding_dim=self._settings.letta_embedding_dim,
         )
 
-    def _resolve_reply_provider_config(self, config: ProviderConfig) -> ProviderConfig:
-        if config.kind != 'ollama_chat':
-            return config
+    def _find_session(self, *, user_id: str, character_id: str) -> LettaSession | None:
+        for session in self._letta_gateway.list_sessions():
+            if session.user_id == user_id and session.character_id == character_id:
+                return session
+        return None
 
-        resolved_base_url = self._resolve_ollama_base_url(config.base_url)
-        if resolved_base_url == (config.base_url or '').rstrip('/'):
-            return config
-        return config.model_copy(update={'base_url': resolved_base_url})
+    def _new_steps(self, *, agent_id: str, baseline_ids: set[str]) -> list[LettaStepDebug]:
+        return [
+            step
+            for step in self._letta_gateway.list_recent_steps(
+                agent_id=agent_id,
+                limit=self._settings.debug_step_limit,
+            )
+            if step.step_id not in baseline_ids
+        ]
 
-    def _resolve_ollama_base_url(self, base_url: str | None) -> str:
-        fallback = self._settings.reply_provider_ollama_base_url.rstrip('/')
-        if not base_url:
-            return fallback
+    def _pick_prompt_trace(
+        self,
+        traces: list[dict[str, Any]],
+        primary_route: str,
+    ) -> dict[str, Any] | None:
+        for trace in reversed(traces):
+            if (
+                trace.get("phase") == "direct_chat_route_call"
+                and trace.get("route_name") == primary_route
+            ):
+                return trace
+        return None
 
-        normalized = base_url.rstrip('/')
-        hostname = urlsplit(normalized).hostname
-        if hostname in {'localhost', '127.0.0.1', '::1'}:
-            return fallback
-        return normalized
+    def _pick_final_provider_trace(
+        self,
+        traces: list[dict[str, Any]],
+        primary_route: str,
+    ) -> dict[str, Any] | None:
+        for trace in reversed(traces):
+            if trace.get("phase") == "surface_route_call":
+                return trace
+        for trace in reversed(traces):
+            if (
+                trace.get("phase") == "direct_chat_route_call"
+                and trace.get("route_name") == primary_route
+            ):
+                return trace
+        return None
 
-    def _build_conversation_window(
-        self, *, request: ChatRequest, character: CharacterRecord
-    ) -> list[ChatMessage]:
-        turns = self._store.list_recent_chat_turns(
-            user_id=request.user_id,
-            character_id=request.character_id,
-            limit=character.memory.conversation_history_window,
-        )
+    def _build_prompt_pipeline(
+        self,
+        *,
+        character: CharacterRecord,
+        memory_blocks: list[MemoryBlock],
+        archival_memory: list[Any],
+        prompt_trace: dict[str, Any] | None,
+    ) -> PromptPipelineDebug:
         messages: list[ChatMessage] = []
-        for turn in turns:
-            messages.append(ChatMessage(role='user', content=turn.user_message))
-            messages.append(ChatMessage(role='assistant', content=turn.assistant_message))
-        messages.append(ChatMessage(role='user', content=request.message))
-        return messages
+        final_payload: object = None
+        if prompt_trace is not None:
+            final_payload = prompt_trace.get("payload")
+            payload_messages = (prompt_trace.get("payload") or {}).get("messages", [])
+            for message in payload_messages:
+                if not isinstance(message, dict):
+                    continue
+                role = str(message.get("role", "assistant"))
+                if role not in {"system", "user", "assistant", "tool"}:
+                    continue
+                messages.append(
+                    ChatMessage(
+                        role=role,
+                        content=self._message_content_to_text(message.get("content")),
+                        name=message.get("name"),
+                        tool_call_id=message.get("tool_call_id"),
+                    )
+                )
+        return PromptPipelineDebug(
+            system_instructions=character.system_instructions,
+            working_context=_split_working_context(memory_blocks),
+            conversation_window=messages,
+            retrieved_archival_memory=list(archival_memory),
+            final_provider_payload=final_payload,
+        )
+
+    def _build_final_provider_call(self, trace: dict[str, Any] | None) -> ProviderCallDebug | None:
+        if trace is None:
+            return None
+        return ProviderCallDebug(
+            route_name=trace.get("route_name"),
+            phase=trace.get("phase"),
+            method=str(trace.get("method", "POST")),
+            url=str(trace.get("url", "")),
+            headers=dict(trace.get("headers", {})),
+            payload=trace.get("payload"),
+            response=trace.get("response"),
+        )
+
+    def _build_native_provider_payload(
+        self,
+        *,
+        character: CharacterRecord,
+        request: ChatRequest,
+    ) -> dict[str, Any]:
+        return {
+            "source": "derived_from_letta_native_provider",
+            "model": character.letta_runtime.primary_agent.model_route,
+            "system_instructions": character.system_instructions,
+            "messages": [
+                {"role": "user", "content": request.message},
+            ],
+            "note": (
+                "Letta does not expose the raw provider HTTP payload for native provider handles. "
+                "This view shows the app-visible parts of the prompt pipeline."
+            ),
+        }
+
+    def _build_native_provider_call(
+        self,
+        *,
+        route_name: str,
+        payload: dict[str, Any],
+        reply: str,
+    ) -> ProviderCallDebug:
+        return ProviderCallDebug(
+            route_name=route_name,
+            phase="native_provider_call_derived",
+            method="LETTA-NATIVE",
+            url=f"letta://provider/{route_name}",
+            headers={},
+            payload=payload,
+            response={
+                "reply": reply,
+                "source": "derived_from_letta_native_provider",
+            },
+        )
+
+    def _build_native_prompt_pipeline(
+        self,
+        *,
+        character: CharacterRecord,
+        memory_blocks: list[MemoryBlock],
+        archival_memory: list[Any],
+        payload: dict[str, Any],
+    ) -> PromptPipelineDebug:
+        messages = [
+            ChatMessage(
+                role="user",
+                content=self._message_content_to_text(message.get("content")),
+                name=message.get("name"),
+                tool_call_id=message.get("tool_call_id"),
+            )
+            for message in payload.get("messages", [])
+            if isinstance(message, dict)
+        ]
+        return PromptPipelineDebug(
+            system_instructions=character.system_instructions,
+            working_context=_split_working_context(memory_blocks),
+            conversation_window=messages,
+            retrieved_archival_memory=list(archival_memory),
+            final_provider_payload=payload,
+        )
+
+    def _trace_to_debug(self, trace: dict[str, Any]) -> GatewayTraceDebug:
+        return GatewayTraceDebug.model_validate(trace)
+
+    @staticmethod
+    def _message_content_to_text(content: object) -> str:
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    parts.append(str(item.get("text", "")))
+            return "\n".join(part for part in parts if part)
+        if content is None:
+            return ""
+        return str(content)
+
+    def _synthesize_memory_traces(
+        self,
+        *,
+        character: CharacterRecord,
+        request: ChatRequest,
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "phase": "direct_chat_route_call",
+                "route_name": character.letta_runtime.primary_agent.model_route,
+                "method": "POST",
+                "url": "memory://model-gateway/v1/chat/completions",
+                "headers": {},
+                "payload": {
+                    "model": character.letta_runtime.primary_agent.model_route,
+                    "messages": [
+                        {"role": "system", "content": character.system_instructions},
+                        {"role": "user", "content": request.message},
+                    ],
+                },
+                "response": {
+                    "choices": [
+                        {"message": {"role": "assistant", "content": f"letta::{request.message}"}}
+                    ]
+                },
+                "status_code": 200,
+            }
+        ]

@@ -1,173 +1,141 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 from memllm_api.app import create_app
 from memllm_api.settings import ApiSettings
-from memllm_domain import ProviderCallDebug, ProviderConfig
-from memllm_reply_providers import ReplyProviderRegistry
 
 
-class FakeReplyProvider:
-    kind = 'ollama_chat'
-
-    def generate(self, config: ProviderConfig, request):  # type: ignore[override]
-        del config
-        from memllm_domain import ProviderResponse
-
-        return ProviderResponse(
-            provider_kind=self.kind,
-            content=f"stub::{request.messages[-1].content}",
-            request_debug=ProviderCallDebug(
-                provider_kind=self.kind,
-                method='POST',
-                url='http://ollama:11434/api/generate',
-                payload={'model': 'fake', 'message': request.messages[-1].content},
-                response={'response': f"stub::{request.messages[-1].content}"},
-            ),
+def _write_manifest(path: Path, *, character_id: str, display_name: str, route: str) -> None:
+    path.write_text(
+        (
+            f"""
+character_id: {character_id}
+display_name: {display_name}
+description: test character {character_id}
+system_instructions: |
+  You are {display_name}.
+shared_memory_blocks:
+  - label: role
+    value: Keep track of the user carefully.
+archival_memory_seed:
+  - durable fact for {character_id}
+letta_runtime:
+  primary_agent:
+    model_route: {route}
+  sleep_time_agent:
+    enabled: true
+    model_route: ollama_sleep_time
+    frequency: 1
+""".strip()
         )
+        + "\n",
+        encoding="utf-8",
+    )
 
 
-def test_seed_chat_and_memory_flow() -> None:
+def test_seed_chat_memory_and_session_lifecycle(tmp_path: Path) -> None:
+    manifests_dir = tmp_path / "manifests"
+    manifests_dir.mkdir()
+    _write_manifest(
+        manifests_dir / "alpha.yaml",
+        character_id="alpha",
+        display_name="Alpha",
+        route="ollama_primary",
+    )
+    _write_manifest(
+        manifests_dir / "beta.yaml",
+        character_id="beta",
+        display_name="Beta",
+        route="doubao_primary",
+    )
+
     settings = ApiSettings(
-        manifest_dir=Path('characters/manifests'),
-        database_backend='memory',
-        letta_mode='memory',
-        memory_extractor_kind='heuristic',
-        debug_inline_memory_writeback=True,
+        manifest_dir=manifests_dir,
+        bootstrap_registry_path=tmp_path / "bootstrap_registry.json",
+        letta_mode="memory",
+        seed_on_startup=False,
     )
     app = create_app(settings)
-    app.state.container.orchestrator._reply_providers = ReplyProviderRegistry([FakeReplyProvider()])  # noqa: SLF001
 
     with TestClient(app) as client:
-        seed_response = client.post('/seed/characters')
+        seed_response = client.post("/seed/characters")
         assert seed_response.status_code == 200
-        assert len(seed_response.json()['seeded']) >= 2
+        seed_payload = seed_response.json()
+        assert {item["character_id"] for item in seed_payload["seeded"]} == {"alpha", "beta"}
+        assert all(item["shared_block_ids"] for item in seed_payload["seeded"])
 
-        characters_response = client.get('/characters')
+        characters_response = client.get("/characters")
         assert characters_response.status_code == 200
-        first_character = characters_response.json()[0]['character_id']
+        characters = {item["character_id"]: item for item in characters_response.json()}
+        assert characters["alpha"]["letta_runtime"]["primary_agent"]["model_route"] == (
+            "ollama_primary"
+        )
+        assert "reply_provider" not in characters["alpha"]
 
         chat_response = client.post(
-            '/chat',
+            "/chat",
             json={
-                'user_id': 'dev-user',
-                'character_id': first_character,
-                'message': 'remember tea',
+                "user_id": "dev-user",
+                "character_id": "alpha",
+                "message": "remember tea",
             },
         )
         assert chat_response.status_code == 200
         chat_payload = chat_response.json()
-        assert chat_payload['reply'] == 'stub::remember tea'
-        assert chat_payload['debug']['final_provider_call']['url'] == 'http://ollama:11434/api/generate'
+        assert chat_payload["reply"] == "letta::remember tea"
+        assert chat_payload["provider_kind"] == "ollama_primary"
+        assert chat_payload["agent_id"]
+
+        debug = chat_payload["debug"]
+        assert debug["final_provider_call"]["route_name"] == "ollama_primary"
+        assert debug["prompt_pipeline"]["system_instructions"] == "You are Alpha.\n"
+        assert debug["prompt_pipeline"]["working_context"]["shared_memory_blocks"]
+        assert debug["prompt_pipeline"]["working_context"]["user_memory_blocks"]
         assert any(
-            event['kind'] == 'archival_memory_search'
-            for event in chat_payload['debug']['trace_events']
+            item["text"] == "durable fact for alpha"
+            for item in debug["prompt_pipeline"]["retrieved_archival_memory"]
         )
-        assert chat_payload['debug']['memory_writeback']['extractor_kind'] == 'heuristic'
+        assert {event["kind"] for event in debug["trace_events"]} >= {
+            "session_resolution",
+            "primary_agent_response",
+            "gateway_route_call",
+            "letta_primary_step",
+            "sleep_time_wait",
+            "letta_sleep_time_step",
+        }
+        assert debug["memory_writeback"]["status"] == "completed"
+        assert debug["memory_writeback"]["sleep_time_agent_id"] is not None
 
-        sessions_response = client.get('/sessions')
+        sessions_response = client.get("/sessions")
         assert sessions_response.status_code == 200
-        sessions_payload = sessions_response.json()
-        assert len(sessions_payload) == 1
-        assert sessions_payload[0]['user_id'] == 'dev-user'
-        assert sessions_payload[0]['character_id'] == first_character
+        sessions = sessions_response.json()
+        assert len(sessions) == 1
+        assert sessions[0]["character_id"] == "alpha"
+        assert sessions[0]["primary_agent_id"] == chat_payload["agent_id"]
+        assert sessions[0]["sleep_time_agent_id"] is not None
 
-        memory_response = client.get(f'/memory/dev-user/{first_character}')
+        memory_response = client.get("/memory/dev-user/alpha")
         assert memory_response.status_code == 200
         snapshot = memory_response.json()
-        assert snapshot['agent_id'] is not None
-        assert any(block['label'] == 'human' for block in snapshot['memory_blocks'])
-        assert 'archival_memory' in snapshot
+        assert snapshot["primary_agent_id"] == chat_payload["agent_id"]
+        assert snapshot["sleep_time_agent_id"] is not None
+        assert any(block["label"] == "human" for block in snapshot["memory_blocks"])
+        assert any(item["text"] == "durable fact for alpha" for item in snapshot["archival_memory"])
 
-        delete_response = client.delete(f'/sessions/dev-user/{first_character}')
+        delete_response = client.delete("/sessions/dev-user/alpha")
         assert delete_response.status_code == 200
-        assert delete_response.json()['character_id'] == first_character
+        deleted = delete_response.json()
+        assert deleted["character_id"] == "alpha"
+        assert deleted["primary_agent_id"] == chat_payload["agent_id"]
 
-        sessions_after_delete = client.get('/sessions')
+        sessions_after_delete = client.get("/sessions")
         assert sessions_after_delete.status_code == 200
         assert sessions_after_delete.json() == []
 
-        memory_after_delete = client.get(f'/memory/dev-user/{first_character}')
+        memory_after_delete = client.get("/memory/dev-user/alpha")
         assert memory_after_delete.status_code == 200
-        assert memory_after_delete.json()['agent_id'] is None
-
-
-class _FakeJsonResponse:
-    def __init__(self, payload: object) -> None:
-        self._payload = payload
-        self.headers = {'content-type': 'application/json'}
-
-    def json(self) -> object:
-        return self._payload
-
-
-def test_parse_simple_payload_extracts_nested_data_content() -> None:
-    from memllm_reply_providers.providers import _parse_simple_payload
-
-    payload = {
-        'status': 1001,
-        'info': 'success!',
-        'data': [
-            {
-                'content': 'Greetings. The air carries a faint frost.',
-                'role': 'assistant',
-            }
-        ],
-    }
-
-    content, raw_payload = _parse_simple_payload(_FakeJsonResponse(payload))
-
-    assert content == 'Greetings. The air carries a faint frost.'
-    assert raw_payload == payload
-
-
-class _FakeTextResponse:
-    def __init__(self, text: str, content_type: str = 'text/plain') -> None:
-        self.text = text
-        self.headers = {'content-type': content_type}
-
-    def json(self) -> object:
-        raise AssertionError('json() should not be used for text/plain response in this test')
-
-
-def test_parse_simple_payload_extracts_nested_content_from_json_text() -> None:
-    from memllm_reply_providers.providers import _parse_simple_payload
-
-    payload = {
-        'status': 1001,
-        'info': 'success!',
-        'data': {
-            'content': 'The snow has settled since we last spoke.',
-            'role': 'assistant',
-        },
-    }
-
-    content, raw_payload = _parse_simple_payload(
-        _FakeTextResponse(json.dumps(payload, ensure_ascii=False))
-    )
-
-    assert content == 'The snow has settled since we last spoke.'
-    assert raw_payload == payload
-
-
-def test_parse_simple_payload_extracts_nested_content_from_double_encoded_json_text() -> None:
-    from memllm_reply_providers.providers import _parse_simple_payload
-
-    payload = {
-        'status': 1001,
-        'info': 'success!',
-        'data': {
-            'content': 'Again, the snowfall pauses.',
-            'role': 'assistant',
-        },
-    }
-
-    content, raw_payload = _parse_simple_payload(
-        _FakeTextResponse(json.dumps(json.dumps(payload, ensure_ascii=False), ensure_ascii=False))
-    )
-
-    assert content == 'Again, the snowfall pauses.'
-    assert raw_payload == json.dumps(payload, ensure_ascii=False)
+        snapshot_after_delete = memory_after_delete.json()
+        assert snapshot_after_delete["primary_agent_id"] is None
+        assert any(block["label"] == "role" for block in snapshot_after_delete["memory_blocks"])

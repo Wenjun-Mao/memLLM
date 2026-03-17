@@ -9,11 +9,11 @@ usage() {
   cat <<'EOF'
 Usage: bash scripts/clean_dev_stack.sh --yes [--preserve-memory] [--include-ollama-cache] [--include-gguf]
 
-Destructive cleanup for the phase-1 Docker dev stack.
+Destructive cleanup for the Letta-native Docker dev stack.
 
 What it removes by default:
 - Docker containers and networks for the memLLM stack
-- Persisted Postgres data, including Letta memory and app metadata
+- Persisted Postgres data, including Letta session state and memory
 - The local .runtime/ directory if present
 
 What it keeps by default:
@@ -24,7 +24,7 @@ What it keeps by default:
 
 Options:
   --yes                   Required confirmation flag.
-  --preserve-memory       Keep the Postgres volume, so Letta memory and app metadata survive.
+  --preserve-memory       Keep the Postgres volume, so Letta session state and memory survive.
   --include-ollama-cache  Also remove Ollama's Docker volume, which forces model re-downloads.
   --include-gguf          Also remove the downloaded GGUF from infra/ollama/models/.
 EOF
@@ -76,9 +76,9 @@ validate_env_constraints
 print_info "Stopping and removing Docker services and networks."
 compose_cmd down --remove-orphans
 
-# Postgres stores Letta memory and app metadata, so wiping this volume is the real reset path.
+# Postgres stores Letta session state and memory, so wiping this volume is the real reset path.
 # `--preserve-memory` exists because sometimes we want a container/network cleanup without losing
-# the current Letta state or app-side session metadata.
+# the current Letta state.
 if [[ "$PRESERVE_MEMORY" != "true" ]] && docker volume inspect "$POSTGRES_VOLUME" >/dev/null 2>&1; then
   print_info "Removing Docker volume $POSTGRES_VOLUME"
   docker volume rm "$POSTGRES_VOLUME" >/dev/null

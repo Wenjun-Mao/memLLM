@@ -1,3 +1,1 @@
-# End-to-End Tests
-
-Reserved for Docker-backed phase-1 smoke tests once the Ubuntu stack is running in CI or a shared dev host.
+Reserved for Docker-backed Step 2 smoke tests once the full Letta-native stack is exercised in CI or on a shared dev host.

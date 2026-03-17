@@ -6,14 +6,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/_dev_stack_common.sh"
 
 usage() {
-  cat <<'EOF'
+  cat <<'HELP'
 Usage: bash scripts/bootstrap_ubuntu.sh [--mode infra|api|full]
 
 Modes:
   infra  Prepare the Docker stack, local models, and Python workspace only.
   api    Do everything in infra, then start the API container.
-  full   Do everything in api, then start the Streamlit dev UI container.
-EOF
+  full   Do everything in api, then start the model gateway and Streamlit dev UI container.
+HELP
 }
 
 MODE="infra"
@@ -146,7 +146,7 @@ download_model_if_needed() {
 }
 
 letta_nltk_data_ready() {
-  NLTK_DOWNLOAD_DIR="$LETTA_NLTK_DATA_DIR" uv run --with nltk python - <<'PY2'
+  NLTK_DOWNLOAD_DIR="$LETTA_NLTK_DATA_DIR" uv run --with nltk python - <<'PY'
 from __future__ import annotations
 
 import os
@@ -160,7 +160,7 @@ try:
 except LookupError:
     sys.exit(1)
 sys.exit(0)
-PY2
+PY
 }
 
 ensure_letta_nltk_data() {
@@ -171,7 +171,7 @@ ensure_letta_nltk_data() {
   fi
 
   print_info "Downloading Letta NLTK data (punkt_tab) to $LETTA_NLTK_DATA_DIR."
-  NLTK_DOWNLOAD_DIR="$LETTA_NLTK_DATA_DIR" uv run --with nltk python - <<'PY2'
+  NLTK_DOWNLOAD_DIR="$LETTA_NLTK_DATA_DIR" uv run --with nltk python - <<'PY'
 from __future__ import annotations
 
 import os
@@ -179,7 +179,7 @@ import os
 import nltk
 
 nltk.download('punkt_tab', download_dir=os.environ['NLTK_DOWNLOAD_DIR'], quiet=True, raise_on_error=True)
-PY2
+PY
 
   if ! letta_nltk_data_ready; then
     print_error "Letta NLTK data is still not loadable from $LETTA_NLTK_DATA_DIR after download."
@@ -218,9 +218,14 @@ wait_for_letta() {
     return 0
   fi
 
-  print_error "Letta did not become ready within ${LETTA_READY_TIMEOUT_SECONDS}s. The bootstrap stops in the infra phase here, so the API and dev UI were not started. If Letta becomes healthy later, rerun the bootstrap or start api/dev_ui with docker compose. Recent container logs:"
+  print_error "Letta did not become ready within ${LETTA_READY_TIMEOUT_SECONDS}s. The bootstrap stops in the infra phase here, so the API and dev UI were not started. If Letta becomes healthy later, rerun the bootstrap or start the later services with docker compose. Recent Letta logs:"
   docker logs --tail 120 "$LETTA_CONTAINER" >&2 || true
   exit 1
+}
+
+wait_for_model_gateway() {
+  print_info "Waiting for model gateway readiness."
+  wait_for_http "memllm-model-gateway" "$MEMLLM_MODEL_GATEWAY_BASE_URL/health" "200" 60
 }
 
 ensure_ollama_model() {
@@ -234,11 +239,10 @@ ensure_ollama_model() {
 }
 
 ensure_custom_ollama_alias() {
-  if docker exec "$OLLAMA_CONTAINER" ollama list | grep -E "^${OLLAMA_MODEL_ALIAS}:latest[[:space:]]" >/dev/null; then
-    print_info "Ollama alias already present: $OLLAMA_MODEL_ALIAS"
-    return 0
-  fi
-  print_info "Creating Ollama alias $OLLAMA_MODEL_ALIAS from the local GGUF."
+  # Rebuild the alias on every bootstrap instead of only when it is missing.
+  # Imported GGUF aliases otherwise keep Ollama's default `{{ .Prompt }}` template,
+  # which removes chat/tool support and causes Letta's tool-enabled requests to fail.
+  print_info "Rebuilding Ollama alias $OLLAMA_MODEL_ALIAS from the checked-in Modelfile."
   docker exec "$OLLAMA_CONTAINER" ollama create \
     "$OLLAMA_MODEL_ALIAS" \
     -f "/workspace/ollama/$(basename "$OLLAMA_MODELFILE")"
@@ -250,7 +254,7 @@ preload_chat_model() {
   OLLAMA_MODEL="$OLLAMA_MODEL_ALIAS:latest" \
   OLLAMA_PRELOAD_ATTEMPTS="$OLLAMA_PRELOAD_ATTEMPTS" \
   OLLAMA_PRELOAD_DELAY_SECONDS="$OLLAMA_PRELOAD_DELAY_SECONDS" \
-  uv run --with httpx python - <<'PY2'
+  uv run --with httpx python - <<'PY'
 from __future__ import annotations
 
 import json
@@ -302,38 +306,48 @@ print(
     file=sys.stderr,
 )
 sys.exit(1)
-PY2
+PY
 }
 
 start_infra() {
-  print_info "Starting Docker services for Postgres/pgvector, Ollama, and Letta."
-  compose_cmd up -d --build postgres ollama letta
+  print_info "Starting Docker services for Postgres/pgvector and Ollama first."
+  compose_cmd up -d postgres ollama
   wait_for_postgres
   wait_for_ollama
-  wait_for_letta
   ensure_ollama_model "$OLLAMA_EMBED_MODEL"
   ensure_custom_ollama_alias
   if ! preload_chat_model; then
     print_error "Failed to preload $OLLAMA_MODEL_ALIAS after ${OLLAMA_PRELOAD_ATTEMPTS} attempts. Continuing without a pinned warm model; first local reply may be slow or fail until Ollama settles. Recent Ollama logs:"
     docker logs --tail 120 "$OLLAMA_CONTAINER" >&2 || true
   fi
+
+  # Start Letta only after the local Ollama models and GGUF alias are ready. Letta syncs
+  # provider handles at startup, so starting it earlier means native ollama/<model> handles
+  # never appear even though Ollama itself is healthy.
+  print_info "Starting Letta and the model gateway after Ollama models are ready."
+  compose_cmd up -d --build --force-recreate letta model_gateway
+  wait_for_letta
+  wait_for_model_gateway
 }
 
 start_api() {
   print_info "Starting the API container."
-  compose_cmd up -d --build api
+  # Keep API startup isolated from infra services. Recreating Letta here causes a race where
+  # the API seeds characters while Letta is briefly restarting, which turns into a startup 500.
+  compose_cmd up -d --build --no-deps api
   wait_for_http "memllm-api" "$MEMLLM_API_BASE_URL/health" "200" 60
 }
 
 start_dev_ui() {
   print_info "Starting the dev UI container."
-  compose_cmd up -d --build dev_ui
+  # The dev UI should not restart the API/infra layers during a normal full bootstrap.
+  compose_cmd up -d --build --no-deps dev_ui
   wait_for_http "memllm-dev-ui" "$MEMLLM_DEV_UI_BASE_URL" "200,302" 60
 }
 
 print_summary() {
   print_info "Bootstrap complete."
-  print_info "Docker stack: Postgres on 127.0.0.1:${POSTGRES_PORT}, Ollama on $OLLAMA_BASE_URL, Letta on $LETTA_BASE_URL"
+  print_info "Docker stack: Postgres on 127.0.0.1:${POSTGRES_PORT}, Ollama on $OLLAMA_BASE_URL, Letta on $LETTA_BASE_URL, model gateway on $MEMLLM_MODEL_GATEWAY_BASE_URL"
   if [[ "$MODE" == "api" || "$MODE" == "full" ]]; then
     print_info "API: $MEMLLM_API_BASE_URL"
   fi

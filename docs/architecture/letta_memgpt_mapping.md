@@ -2,35 +2,32 @@
 
 ## Purpose
 
-This file keeps the repo honest about which labels come from Letta today, which labels come from the
-MemGPT paper, and where the current phase-1 app still differs from the paper's architecture.
+This file keeps the repo honest about which labels come from Letta today, which labels come from the MemGPT paper, and where the current runtime is showing a derived analogy rather than a literal paper primitive.
 
 ## Mapping Table
 
-| Repo / Dev UI term | MemGPT paper analogue | What it means in this repo |
+| Repo / Dev UI term | MemGPT paper analogue | What it means here |
 |---|---|---|
-| `System Instructions` | `System Instructions` | The manifest's `system_instructions` text sent to the final reply provider |
-| `Working Context` | `Working Context` | Letta memory blocks included in the live turn |
-| `Conversation Window` | `FIFO Queue` analogue | Recent turn history from app metadata sent with the final provider call |
-| `Archival Memory` | `Archival Storage` / retrieved external memory | Letta passage memory retrieved by search |
-| `Current-Round Memory Work` | function calls / memory operations | The app's live trace for retrieval, extraction, and writeback |
+| `System Instructions` | `System Instructions` | The Letta system layer for the primary agent |
+| `Working Context` | `Working Context` | Letta memory blocks visible for the live turn |
+| `Conversation Window` | FIFO queue analogue | The message window visible in the Letta-to-gateway request |
+| `Archival Memory` | archival / recall storage | Letta archival memory retrieved for the turn or shown in snapshot views |
+| `Primary Agent` | main conversational loop | The user-facing Letta agent |
+| `Sleep-Time Agent` | background memory worker | The Letta background agent that consolidates memory |
+| `Current-Round Memory Work` | function calls / memory operations | The observed Letta steps plus gateway traces for one round |
 
-## What Matches the Paper Closely
+## What Matches Closely
 
-- The final prompt assembly is explained as `System Instructions + Working Context + Conversation Window`.
-- Long-term retrievable memory is treated as archival memory.
-- Memory updates are visible as explicit operations rather than hidden side effects.
+- There is a real primary conversational agent.
+- There is a real sleep-time/background agent.
+- There is a real separation between working-context memory blocks and archival memory.
+- The final prompt explanation maps cleanly to `System Instructions + Working Context + Conversation Window`.
 
-## What Does Not Match Yet
+## What Is Still Only an Analogy
 
-- The app does not yet use a full Letta-native multi-agent or single-agent MemGPT loop for the
-  final answer.
-- The post-turn memory extractor is still an app-managed Ollama call.
-- The final user-visible reply is still sent directly to DouBao or Ollama by the app.
-- The conversation window is app-managed, not a first-class Letta recall-store UI surface.
+- The Dev UI does not expose a first-class paper-style recall-storage product surface.
+- The `Prompt Pipeline` panel is reconstructed from observable request/trace surfaces; it is not a dump of a private internal Letta prompt-builder object.
 
-## Operator Guidance
+## Demo Guidance
 
-Use Letta terms first in demos and docs.
-Use MemGPT paper terms as secondary explanation only when they illuminate the architecture.
-Do not describe the current app as already having a distinct recall-storage product surface.
+Use Letta terms first. Use MemGPT paper terms as a secondary explanation when they help people understand why there is a primary agent, a sleep-time agent, working context, and archival memory.

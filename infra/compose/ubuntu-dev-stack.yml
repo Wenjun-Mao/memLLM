@@ -38,6 +38,7 @@ services:
       - ollama
     environment:
       LETTA_PG_URI: postgresql://${POSTGRES_USER:-memllm}:${POSTGRES_PASSWORD:-memllm}@postgres:5432/${LETTA_DB_NAME:-letta}
+      # Letta's Ollama provider expects the OpenAI-compatible /v1 base for runtime calls.
       OLLAMA_BASE_URL: http://ollama:11434/v1
       NLTK_DATA: /root/nltk_data
       SECURE: ${LETTA_SECURE:-false}
@@ -47,46 +48,63 @@ services:
     volumes:
       - ../letta/nltk_data:/root/nltk_data
 
+  model_gateway:
+    build:
+      context: ../..
+      dockerfile: infra/docker/model_gateway.Dockerfile
+    image: memllm-model-gateway:dev
+    container_name: memllm-model-gateway
+    restart: unless-stopped
+    depends_on:
+      - ollama
+    environment:
+      MEMLLM_MODEL_GATEWAY_HOST: 0.0.0.0
+      MEMLLM_MODEL_GATEWAY_PORT: 9100
+      MEMLLM_MODEL_GATEWAY_ROUTES_PATH: /app/infra/model_gateway/routes.yaml
+      MEMLLM_OLLAMA_OPENAI_BASE_URL: http://ollama:11434
+      MEMLLM_DOUBAO_ENDPOINT: ${MEMLLM_DOUBAO_ENDPOINT:-https://ou-han.cn/DouBao/chat_new_ai}
+      OLLAMA_MODEL_ALIAS: ${OLLAMA_MODEL_ALIAS:-memllm-qwen3.5-9b-q4km}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-qwen3-embedding:0.6b}
+    ports:
+      - "${MEMLLM_MODEL_GATEWAY_PORT:-9100}:9100"
+
   api:
     build:
       context: ../..
       dockerfile: infra/docker/api.Dockerfile
+    image: memllm-api:dev
     container_name: memllm-api
     restart: unless-stopped
     depends_on:
-      - postgres
-      - ollama
       - letta
+      - model_gateway
     environment:
       MEMLLM_API_HOST: 0.0.0.0
       MEMLLM_API_PORT: 8000
       MEMLLM_API_SEED_ON_STARTUP: 'true'
-      MEMLLM_API_DATABASE_BACKEND: sqlalchemy
-      MEMLLM_API_DATABASE_URL: postgresql+psycopg://memllm:memllm@postgres:5432/memllm
       MEMLLM_API_LETTA_MODE: real
       MEMLLM_API_LETTA_BASE_URL: http://letta:8283
-      MEMLLM_API_LETTA_MODEL: ollama/${OLLAMA_MODEL_ALIAS:-memllm-qwen3.5-9b-q4km}
-      MEMLLM_API_LETTA_EMBEDDING: ollama/${OLLAMA_EMBED_MODEL:-qwen3-embedding:0.6b}
-      MEMLLM_API_LETTA_USE_DIRECT_MODEL_CONFIG: 'true'
-      MEMLLM_API_LETTA_MODEL_NAME: ${OLLAMA_MODEL_ALIAS:-memllm-qwen3.5-9b-q4km}:latest
-      MEMLLM_API_LETTA_MODEL_ENDPOINT: http://ollama:11434/v1
-      MEMLLM_API_LETTA_MODEL_CONTEXT_WINDOW: '262144'
-      MEMLLM_API_LETTA_MODEL_MAX_TOKENS: '1024'
-      MEMLLM_API_LETTA_EMBEDDING_NAME: ${OLLAMA_EMBED_MODEL:-qwen3-embedding:0.6b}
+      MEMLLM_API_LETTA_GATEWAY_ENDPOINT: http://model_gateway:9100/v1
+      MEMLLM_API_LETTA_EMBEDDING_ROUTE: qwen3-embedding:0.6b
       MEMLLM_API_LETTA_EMBEDDING_ENDPOINT: http://ollama:11434/v1
       MEMLLM_API_LETTA_EMBEDDING_DIM: '1024'
-      MEMLLM_API_DEBUG_INLINE_MEMORY_WRITEBACK: 'true'
-      MEMLLM_API_MEMORY_EXTRACTOR_KIND: ollama_json
-      MEMLLM_API_MEMORY_EXTRACTOR_BASE_URL: http://ollama:11434
-      MEMLLM_API_MEMORY_EXTRACTOR_MODEL: ${OLLAMA_MODEL_ALIAS:-memllm-qwen3.5-9b-q4km}
-      MEMLLM_API_REPLY_PROVIDER_OLLAMA_BASE_URL: http://ollama:11434
+      MEMLLM_API_LETTA_CONTEXT_WINDOW: '262144'
+      MEMLLM_API_LETTA_MAX_TOKENS: '1024'
+      MEMLLM_API_LETTA_MESSAGE_MAX_STEPS: '16'
+      MEMLLM_API_MODEL_GATEWAY_BASE_URL: http://model_gateway:9100
+      MEMLLM_API_DEBUG_WAIT_FOR_SLEEP_TIME: 'true'
+      MEMLLM_API_DEBUG_SLEEP_TIME_TIMEOUT_SECONDS: '60'
+      MEMLLM_API_DEBUG_SLEEP_TIME_POLL_INTERVAL_SECONDS: '1'
+      MEMLLM_API_DEBUG_STEP_LIMIT: '12'
+      MEMLLM_API_MODEL_GATEWAY_TRACE_LIMIT: '200'
     ports:
-      - "8000:8000"
+      - "${MEMLLM_API_PORT:-8000}:8000"
 
   dev_ui:
     build:
       context: ../..
       dockerfile: infra/docker/dev_ui.Dockerfile
+    image: memllm-dev-ui:dev
     container_name: memllm-dev-ui
     restart: unless-stopped
     depends_on:
@@ -99,7 +117,7 @@ services:
       STREAMLIT_SERVER_HEADLESS: 'true'
       STREAMLIT_BROWSER_GATHER_USAGE_STATS: 'false'
     ports:
-      - "8501:8501"
+      - "${MEMLLM_DEV_UI_PORT:-8501}:8501"
 
 volumes:
   postgres_data:

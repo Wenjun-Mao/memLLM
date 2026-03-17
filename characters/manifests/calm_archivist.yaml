@@ -5,19 +5,6 @@ system_instructions: |
   You are Calm Archivist, an organized and unhurried conversational guide.
   You explain difficult ideas plainly, remember user preferences, and avoid dramatic phrasing.
   Be concise, structured, and grounded. Prefer direct help over performance.
-reply_provider:
-  kind: ollama_chat
-  base_url: http://localhost:11434
-  model: memllm-qwen3.5-9b-q4km
-  timeout_seconds: 300
-  extra:
-    temperature: 0.3
-memory:
-  archival_memory_search_limit: 6
-  snapshot_archival_memory_limit: 12
-  conversation_history_window: 8
-  initial_user_memory: |
-    The user has not yet shared enduring preferences or working context.
 shared_memory_blocks:
   - label: role
     description: Long-term role framing carried into working context for every user.
@@ -26,3 +13,10 @@ shared_memory_blocks:
 archival_memory_seed:
   - Summarize clearly, avoid fluff, and preserve important user-specific context.
   - Prefer stable plans and explicit tradeoffs over improvisation.
+letta_runtime:
+  primary_agent:
+    model_route: ollama_primary
+  sleep_time_agent:
+    enabled: true
+    model_route: ollama_sleep_time
+    frequency: 1

@@ -1,10 +1,10 @@
 # Copy this file to a new manifest and then replace the example values.
 # This is a documentation template. Keep it outside characters/manifests so it is never seeded.
-# This schema is a clean dev-phase break. Old keys such as persona/system_prompt/shared_passages
-# are intentionally no longer supported.
+# This schema is the Letta-native step-2 cutover. Old keys such as reply_provider and memory are
+# intentionally no longer supported.
 
 character_id: example_character
-# Stable machine id used by the API, storage, and user/character session mapping.
+# Stable machine id used by the API, Letta tags/metadata, and user/character session mapping.
 
 display_name: Example Character
 # Human-facing label shown in the UI.
@@ -19,70 +19,8 @@ system_instructions: |
   Reply in concise natural language.
   Do not write stage directions.
   If you do not know a real-time fact, say so directly.
-# The full instruction layer for the final reply provider.
+# The full Letta system layer for the primary conversational agent.
 # Use this for identity, stable behavior, language rules, honesty rules, and output constraints.
-# In the Dev UI this maps to the "System Instructions" section of the prompt pipeline.
-
-reply_provider:
-  kind: ollama_chat
-  # Which adapter the app should use for the final user-facing reply.
-  # Valid values today: ollama_chat, custom_simple_http.
-
-  base_url: http://localhost:11434
-  # Base URL for providers that need a local/server endpoint, such as Ollama.
-  # Usually omitted for custom_simple_http if endpoint is already fully qualified.
-
-  endpoint:
-  # Full endpoint for custom_simple_http providers.
-  # Leave null/blank for ollama_chat.
-
-  model: memllm-qwen3.5-9b-q4km
-  # Model name used by the provider, if that provider requires one.
-  # Required for ollama_chat.
-
-  transport: get
-  # HTTP method for custom_simple_http.
-  # Valid values today: get, post.
-  # For ollama_chat this is ignored.
-
-  timeout_seconds: 180
-  # Per-request timeout for the final reply call.
-
-  headers: {}
-  # Optional HTTP headers sent to the provider.
-  # Put auth or custom provider headers here when needed.
-
-  extra:
-    temperature: 0.4
-    # Sampling randomness for providers that support it.
-    # Lower values are more deterministic; higher values are more varied.
-
-    num_predict: 160
-    # Maximum number of output tokens for ollama_chat native generation.
-    # Use this to cap reply length.
-
-    # api_mode: native_generate
-    # Optional ollama_chat mode switch.
-    # native_generate uses /api/generate; chat_completions uses /v1/chat/completions.
-
-# Reply-provider config.
-# For custom_simple_http, endpoint is required.
-# For ollama_chat, base_url and model are the important fields.
-# extra is forwarded to the provider adapter, so supported keys depend on that provider.
-
-memory:
-  archival_memory_search_limit: 6
-  # How many Letta archival-memory items are retrieved for a live turn and included in the final call.
-
-  snapshot_archival_memory_limit: 12
-  # How many archival-memory items the dev UI memory snapshot returns for inspection.
-
-  conversation_history_window: 8
-  # How many recent turns are included in the final reply call.
-
-  initial_user_memory: |
-    The user has not shared stable preferences yet.
-  # The starting Letta `human` block for a new (user_id, character_id) pair.
 
 shared_memory_blocks:
   - label: style
@@ -98,10 +36,12 @@ shared_memory_blocks:
     # Optional human-readable explanation for operators.
 
     limit:
-    # Optional future-facing block limit. The current app stores it for inspection/documentation.
+    # Optional Letta-style character limit hint for this block.
+    # The current app stores it for inspection/documentation and future alignment.
 
     read_only:
-    # Optional future-facing mutability hint. The current app stores it for inspection/documentation.
+    # Optional Letta-style mutability hint for this block.
+    # Leave blank unless you intentionally want the block treated as operator-managed.
 
   - label: background
     value: |
@@ -114,6 +54,26 @@ shared_memory_blocks:
 archival_memory_seed:
   - Prefers rain, tea, sea wind, and low-key conversations.
   - When the user is stressed, respond gently before offering advice.
-# Seed archival-memory items copied into each new Letta agent exactly once.
+# Seed archival-memory items copied into each new user/character Letta session exactly once.
 # These are real archival-memory entries, not synthesized blocks.
-# They are distinct from shared_memory_blocks: blocks are shared across users; archival seed text is copied per user-agent pair.
+
+letta_runtime:
+  primary_agent:
+    model_route: doubao_primary
+    # Use a slashless model_gateway route like `doubao_primary` or `ollama_primary`
+    # for the standard dev stack. The current Qwen GGUF path stays on the gateway
+    # because it needs gateway-side shaping such as `think: false`.
+    # Native Letta handles like `ollama/memllm-qwen3.5-9b-q4km:latest` are still
+    # supported for experiments when the provider needs no extra shaping.
+
+  sleep_time_agent:
+    enabled: true
+    # Whether Letta should create and use a background sleep-time agent for this character.
+
+    model_route: ollama_sleep_time
+    # The standard dev stack also runs sleep-time through the gateway so the local
+    # Qwen route gets the same request shaping as the primary local chat path.
+
+    frequency: 1
+    # Ask Letta to run the sleep-time agent every N turns.
+    # Lower values update memory more eagerly; higher values batch memory work more aggressively.

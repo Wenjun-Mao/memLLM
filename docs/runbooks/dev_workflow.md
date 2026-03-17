@@ -2,14 +2,14 @@
 
 ## Typical Loop
 
-1. Bootstrap the environment with the mode that matches what you need:
-   - `bash scripts/bootstrap_ubuntu.sh --mode infra` for core services only
-   - `bash scripts/bootstrap_ubuntu.sh --mode api` for core services plus the backend API
-   - `bash scripts/bootstrap_ubuntu.sh --mode full` for core services plus the backend API plus the Streamlit UI
-2. Use `bash scripts/status_dev_stack.sh` to confirm the Docker services are healthy.
-3. Open the Streamlit dev UI when using `--mode full`.
-4. Open Letta Desktop or ADE to inspect memory behavior.
-5. Capture durable findings in [../planning/phase_2_prep.md](../planning/phase_2_prep.md) and keep [../planning/current_status.md](../planning/current_status.md) current.
+1. Bootstrap the environment with the mode you need:
+   - `bash scripts/bootstrap_ubuntu.sh --mode infra`
+   - `bash scripts/bootstrap_ubuntu.sh --mode api`
+   - `bash scripts/bootstrap_ubuntu.sh --mode full`
+2. Check health with `bash scripts/status_dev_stack.sh`.
+3. Open the Dev UI when using `--mode full`.
+4. Open Letta Desktop or ADE when you need direct memory inspection.
+5. Capture durable findings in `docs/` instead of relying on chat history.
 
 ## Command Reference
 
@@ -21,29 +21,33 @@ bash scripts/bootstrap_ubuntu.sh --mode full
 bash scripts/status_dev_stack.sh
 bash scripts/stop_dev_stack.sh
 bash scripts/clean_dev_stack.sh --yes
+uv run ruff check .
 uv run pytest
 ```
 
 ## Character Tuning
 
-- Edit `system_instructions` for identity, stable behavior, output constraints, honesty rules, and language choice.
-- Edit `shared_memory_blocks` for reusable Letta working-context facets such as `style` or `background`.
-- Edit `archival_memory_seed` for evergreen facts that should behave like retrievable archival memory.
-- When you want to remove a behavior, write both the negative rule and the replacement behavior.
-- Retest with a fresh `User ID` in the dev UI when evaluating prompt changes. Old assistant replies are replayed into later turns, so a dirty session can make a prompt fix look weaker than it is.
-- After changing a manifest, reseed characters. After the schema rename in this phase, do a clean reset and reseed instead of trying to reuse old metadata rows.
+- Edit `system_instructions` for identity, stable behavior, language rules, and output constraints.
+- Edit `shared_memory_blocks` for reusable working-context facets.
+- Edit `archival_memory_seed` for durable archival snippets that each new session should start with.
+- Edit `letta_runtime` to choose a model route. Use slashless `model_gateway` routes such as `ollama_primary`, `ollama_sleep_time`, and `doubao_primary` for the standard dev stack. Native Letta handles (`provider/model`) remain available for experiments when the provider needs no extra shaping. Keep raw provider details in `infra/model_gateway/routes.yaml`.
+- Retest with a fresh `User ID` when evaluating character behavior.
 
-## Schema-Break Rule
+## Runtime Debugging
 
-This schema rename is a clean dev-phase break.
+When a turn looks wrong, inspect in this order:
 
-If you pull these changes into an older running stack, reset and reseed before testing:
+1. `Final Provider Call`
+2. `Prompt Pipeline`
+3. `Current-Round Memory Work`
+4. `Memory Snapshot`
+5. Letta Desktop / ADE for the same session
+
+## Reset Rule
+
+This runtime is a breaking dev-phase cutover. If you pull a newer version of the repo and the stack behavior looks inconsistent, reset and reseed before debugging:
 
 ```bash
 bash scripts/clean_dev_stack.sh --yes
 bash scripts/bootstrap_ubuntu.sh --mode full
 ```
-
-## Documentation Rule
-
-If an implementation or environment detail matters for future work, document it before closing the task.

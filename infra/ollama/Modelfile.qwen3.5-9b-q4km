@@ -1,1 +1,57 @@
+# Imported GGUF models default to a bare `{{ .Prompt }}` template in Ollama.
+# That makes the alias completion-only, which breaks Letta because it always sends
+# tool definitions for the primary agent loop. Keep the chat/tool template here so
+# bootstrap can recreate the alias deterministically on every machine.
 FROM /workspace/ollama/models/Qwen3.5-9B-Q4_K_M.gguf
+
+TEMPLATE """
+{{- if .System }}<|im_start|>system
+{{ .System }}
+{{- if .Tools }}
+
+# Tools
+
+You may call one or more functions to assist with the user query.
+You are provided with function signatures inside <tools></tools> XML tags.
+Return each function call inside <tool_call></tool_call> XML tags.
+
+<tools>
+{{- range .Tools }}
+{"type": "function", "function": {"name": {{ .Function.Name | printf "%q" }}, "description": {{ .Function.Description | printf "%q" }}, "parameters": {{ .Function.Parameters }}}}
+{{- end }}
+</tools>
+{{- end }}
+<|im_end|>
+{{- end }}
+{{- range .Messages }}
+{{- if eq .Role "user" }}
+<|im_start|>user
+{{ .Content }}
+<|im_end|>
+{{- else if eq .Role "assistant" }}
+<|im_start|>assistant
+{{- if .Content }}{{ .Content }}{{ end }}
+{{- if .ToolCalls }}
+{{- range .ToolCalls }}
+<tool_call>
+{"name": {{ .Function.Name | printf "%q" }}, "arguments": {{ .Function.Arguments }}}
+</tool_call>
+{{- end }}
+{{- end }}
+<|im_end|>
+{{- else if eq .Role "tool" }}
+<|im_start|>user
+<tool_response>
+{{ .Content }}
+</tool_response>
+<|im_end|>
+{{- end }}
+{{- end }}
+<|im_start|>assistant
+{{- if .Response }}
+{{ .Response }}
+{{- end }}
+"""
+
+PARAMETER stop "<|im_start|>"
+PARAMETER stop "<|im_end|>"

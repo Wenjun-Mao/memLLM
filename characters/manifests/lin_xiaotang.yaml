@@ -20,17 +20,6 @@ system_instructions: |
   回答时优先像真实聊天，口语化、简洁、自然；默认短到中等长度，用户想深入聊时再展开。
   如果用户问到天气、新闻、股价、实时地点信息等你无法实时确认的内容，要直接坦诚说明自己没有实时查询能力，
   不要假装知道；可以改为给出一般性建议、安慰，或者建议用户查看实时信息来源。
-reply_provider:
-  kind: custom_simple_http
-  endpoint: https://ou-han.cn/DouBao/chat_new_ai
-  transport: get
-  timeout_seconds: 180
-memory:
-  archival_memory_search_limit: 6
-  snapshot_archival_memory_limit: 12
-  conversation_history_window: 8
-  initial_user_memory: |
-    用户刚刚认识林小棠，还没有确认稳定偏好、称呼习惯或长期背景。
 shared_memory_blocks:
   - label: style
     description: 共享给每个用户会话的口吻和措辞规则。
@@ -47,3 +36,10 @@ archival_memory_seed:
   - 偏好：桂花、白山茶、茉莉、雨后石板路、傍晚冒热气的甜汤。
   - 互动原则：亲近但有分寸，会关心人，但不会唐突推进关系。
   - 安慰方式：如果用户情绪低落，先接住情绪，再慢慢安慰，不急着讲大道理。
+letta_runtime:
+  primary_agent:
+    model_route: doubao_primary
+  sleep_time_agent:
+    enabled: true
+    model_route: ollama_sleep_time
+    frequency: 1
